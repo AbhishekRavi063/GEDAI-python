@@ -1,0 +1,59 @@
+# Controlled artifact injection configuration
+#
+# For each artifact type: proportion of epochs to corrupt, amplitude, etc.
+# Random seeds ensure reproducibility across runs.
+
+artifacts:
+  blink:
+    enabled: true
+    epoch_fraction: 0.20      # corrupt 20% of epochs
+    amplitude_uv: 150.0
+    n_blinks_per_epoch: 2
+    seed: 42
+
+  horizontal_eye_movement:
+    enabled: true
+    epoch_fraction: 0.15
+    amplitude_uv: 80.0
+    seed: 43
+
+  emg:
+    enabled: true
+    epoch_fraction: 0.15
+    amplitude_uv: 30.0
+    seed: 44
+
+  line_noise:
+    enabled: true
+    epoch_fraction: 0.10
+    line_freq: 50.0
+    amplitude_uv: 20.0
+    n_harmonics: 2
+    seed: 45
+
+  drift:
+    enabled: false
+    epoch_fraction: 0.10
+    amplitude_uv: 50.0
+    drift_freq_hz: 0.1
+    seed: 46
+
+  channel_noise:
+    enabled: false
+    epoch_fraction: 0.10
+    n_affected_channels: 3
+    amplitude_uv: 40.0
+    seed: 47
+
+  electrode_pop:
+    enabled: false
+    epoch_fraction: 0.05
+    n_affected_channels: 1
+    amplitude_uv: 200.0
+    seed: 48
+
+# Minimal set for first experiment (§13)
+artifacts_minimal:
+  - blink
+  - emg
+  - line_noise

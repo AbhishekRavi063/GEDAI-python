@@ -1,0 +1,36 @@
+# BNCI2014_001 dataset configuration
+dataset: BNCI2014_001
+subjects: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+subjects_minimal: [1, 2]   # for quick pilot run
+sfreq: 250.0
+n_channels: 22              # EEG only (excluding 3 EOG)
+n_eog_channels: 3
+event_id:
+  left_hand: 1
+  right_hand: 2
+  feet: 3
+  tongue: 4
+tmin: -0.5
+tmax: 4.0
+baseline: [-0.5, 0.0]
+
+# Preprocessing
+bandpass_l_freq: 1.0
+bandpass_h_freq: 40.0
+
+# GEDAI defaults
+gedai:
+  artifact_threshold_type: "auto"
+  epoch_size_in_cycles: 12
+  lowcut_hz: 0.5
+  wavelet: "haar"
+  lam: 0.05
+  smoothing_window_sec: .inf   # global (non-sliding) default
+
+# Sensorimotor channels for preservation metrics
+sensorimotor_channels: ["C3", "Cz", "C4"]
+
+# Decoding
+n_cv_folds: 5
+n_csp_components: 6
+random_state: 42

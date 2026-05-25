@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Results & logs (large files, not for sharing)
+results/*.csv
+results/*.txt
+results/*.zip
+results/figures/
+results/weibo_for_prof/
+results/weibo_for_prof.zip
+
+# EEG data (downloaded by MOABB automatically)
+~/mne_data/
+*.fif
+*.edf
+*.bdf
+*.npz
+*.npy
+*.h5
+*.hdf5
+
+# MOABB cache
+moabb_data/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+log_*.txt

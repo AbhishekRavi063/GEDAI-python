@@ -1,0 +1,33 @@
+# ENOVA threshold sweep configuration
+#
+# ENOVA interpretation:
+#   0.50 → reject if >50% variance is noise (very aggressive)
+#   0.70 → moderately aggressive
+#   0.80 → moderate
+#   0.90 → MATLAB default heuristic (reject if >90% noise)
+#   0.95 → conservative
+#   1.00 → almost never reject (reconstruct everything)
+#
+thresholds:
+  - 0.50
+  - 0.60
+  - 0.70
+  - 0.80
+  - 0.85
+  - 0.90   # MATLAB default
+  - 0.95
+  - 1.00
+
+# Minimal sweep for first experiment (§13)
+thresholds_minimal:
+  - 0.70
+  - 0.80
+  - 0.90   # MATLAB default
+  - 0.95
+
+# Sliding window sizes to test
+sliding_window_sizes_sec:
+  - .inf    # global (no sliding)
+  - 60
+  - 30
+  - 120
