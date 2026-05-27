@@ -105,13 +105,13 @@ def main():
         summary = df.groupby("enova_threshold")[metric_cols].mean()
         print(summary.to_string())
         print()
-        if "ba_reject_keep" in summary.columns:
+        if "ba_reject_keep" in summary.columns and summary["ba_reject_keep"].notna().any():
             best_ba = summary["ba_reject_keep"].idxmax()
             print(f"Best threshold (reject+keep BA):  {best_ba:.2f}")
-        if "ba_reconstruct" in summary.columns:
+        if "ba_reconstruct" in summary.columns and summary["ba_reconstruct"].notna().any():
             best_r = summary["ba_reconstruct"].idxmax()
             print(f"Best threshold (reconstruct BA):  {best_r:.2f}")
-        if "snr_improvement_db" in summary.columns:
+        if "snr_improvement_db" in summary.columns and summary["snr_improvement_db"].notna().any():
             best_snr = summary["snr_improvement_db"].idxmax()
             print(f"Best threshold by SNR:            {best_snr:.2f}")
         print(f"\nMAT-LAB default threshold (0.90): see row above.")

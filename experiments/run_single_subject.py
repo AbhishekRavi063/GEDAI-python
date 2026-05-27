@@ -201,7 +201,7 @@ def prepare_subject(
     random_seed: int = 42,
     sliding_window_sec: float = np.inf,   # np.inf = disabled (MATLAB default)
     dataset_name: str = "BNCI2014_001",
-    inject_artifacts: bool = True,        # False → evaluate on natural EEG artifacts only
+    inject_artifacts: bool = False,        # False → evaluate on natural EEG artifacts only
 ) -> SubjectCache:
     """Run everything that doesn't depend on the ENOVA threshold.
 

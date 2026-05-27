@@ -75,11 +75,8 @@ def run_threshold_sweep(
         total_combos = len(subj_list) * len(thresholds)
         done = 0
 
-        # Disable synthetic artifact injection for datasets where natural EEG
-        # amplitude variance is much larger than calibrated injection amplitudes
-        # (e.g. Weibo2014 with >800 µV noise floor — injected 150 µV blinks are
-        # proportionally tiny, causing GEDAI to over-clean and SNR to go negative).
-        inject_arts = ds_name not in ("Weibo2014",)
+        # Disable synthetic artifact injection completely for all datasets
+        inject_arts = False
 
         for s_idx, subj in enumerate(subj_list, 1):
             logger.info(f"[{ds_name} | Subject {s_idx}/{len(subj_list)}] Preparing subject {subj}…")

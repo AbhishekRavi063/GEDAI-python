@@ -1085,13 +1085,13 @@ class GEDAICore:
 
             # Per-band minThreshold: matches MATLAB GEDAI.m lines 787-790:
             #   current_minThreshold = 0
-            #   if (current_center_freq >= 0.5 && current_center_freq <= 60)
+            #   if (current_center_freq >= 0.8 && current_center_freq <= 60)
             #       current_minThreshold = -6;
-            # i.e. -6 for most EEG bands (0.5–60 Hz), 0 only for high-gamma (>60 Hz)
+            # i.e. -6 for most EEG bands (0.8–60 Hz), 0 only for high-gamma (>60 Hz) and infra-slow (<0.8 Hz)
             center_freq = (flo + fhi) / 2.0
-            s_min = -6.0 if 0.5 <= center_freq <= 60.0 else 0.0
+            s_min = -6.0 if 0.8 <= center_freq <= 60.0 else 0.0
 
-            logger.info(f"Band {band_idx} ({flo:.2f}–{fhi:.2f} Hz) epoch={epoch_size_band:.2f}s")
+            logger.info(f"Band {band_idx} ({flo:.2f}–{fhi:.2f} Hz) epoch={epoch_size_band:.2f}s, min_t={s_min}")
 
             c_band, n_band, res_band = _gedai_per_band(
                 band_data, sfreq, ref_cov_reg, ref_evecs,
