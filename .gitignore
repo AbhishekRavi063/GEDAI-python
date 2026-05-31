@@ -18,13 +18,13 @@ env/
 .ipynb_checkpoints/
 *.ipynb
 
-# Results & logs (large files, not for sharing)
-results/*.csv
-results/*.txt
-results/*.zip
-results/figures/
-results/weibo_for_prof/
-results/weibo_for_prof.zip
+# Results, plots, & logs (large files and generated assets)
+results/
+plots/
+
+# Ignore all markdown plans, walkthroughs, and notes
+*.md
+!README.md
 
 # EEG data (downloaded by MOABB automatically)
 ~/mne_data/
@@ -35,6 +35,9 @@ results/weibo_for_prof.zip
 *.npy
 *.h5
 *.hdf5
+
+# Dataset 27 — gel/water/dry .mat files (too large for git, ~6.8 GB)
+datasets/dataset27/
 
 # MOABB cache
 moabb_data/

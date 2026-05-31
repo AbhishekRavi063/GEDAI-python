@@ -65,6 +65,31 @@ FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 def load_subject_continuous(dataset_name: str, subject_id: int):
     """Load one subject, return (data_continuous µV, sfreq, ch_names, mne_info)."""
     logger.info(f"Loading {dataset_name} subject {subject_id} …")
+
+    # P300 datasets — use MOABB P300 paradigm directly
+    if dataset_name in ("BNCI2014_008", "RomaniBF2025ERP", "BI2013a", "Lee2019_ERP"):
+        import moabb.datasets as _mds
+        from moabb.paradigms import P300
+        ds_cls = getattr(_mds, dataset_name)
+        if dataset_name == "Lee2019_ERP":
+            dataset = ds_cls(sessions=[1])
+            dataset._selected_sessions = ["0"]
+            paradigm = P300(resample=250)
+        else:
+            dataset = ds_cls()
+            paradigm = P300()
+        X, y, metadata = paradigm.get_data(dataset=dataset, subjects=[subject_id], return_epochs=True)
+        epochs = X
+        sfreq = float(epochs.info["sfreq"])
+        ch_names = list(epochs.ch_names)
+        mne_info = epochs.info
+        n_ep, n_ch, n_t = epochs.get_data().shape
+        data_ep = epochs.get_data() * 1e6   # V → µV
+        data_cont = data_ep.transpose(1, 0, 2).reshape(n_ch, n_ep * n_t)
+        logger.info(f"  {n_ep} epochs × {n_ch} ch × {n_t} samp → {data_cont.shape[1]/sfreq:.1f} s @ {sfreq} Hz")
+        return data_cont, sfreq, ch_names, mne_info
+
+    # MI datasets — existing path
     if dataset_name == "BNCI2014_001":
         sd = load_bnci2014_001(subjects=[subject_id])
     else:
@@ -80,11 +105,12 @@ def load_subject_continuous(dataset_name: str, subject_id: int):
     return data_cont, sfreq, ch_names, sd[subject_id]["eeg_epochs"].info
 
 
+
 # ---------------------------------------------------------------------------
 # Run GEDAI
 # ---------------------------------------------------------------------------
 
-def run_gedai(data: np.ndarray, sfreq: float, ch_names: list, mne_info):
+def run_gedai(data: np.ndarray, sfreq: float, ch_names: list, mne_info, enova_only: bool = False):
     """Run GEDAI. Returns (clean, noise, result, ref_cov_reg)."""
     import mne
 
@@ -115,6 +141,50 @@ def run_gedai(data: np.ndarray, sfreq: float, ch_names: list, mne_info):
         # Fall back to data covariance
         ref_cov_reg = regularize_cov(np.cov(data.astype(np.float64)), lam=0.05)
         logger.warning("  Using data covariance as reference (leadfield unavailable)")
+
+    if enova_only:
+        from gedai_core.reject import identify_bad_channels
+        from experiments.run_single_subject import _interpolate_bad_channels
+
+        gedai = GEDAICore(
+            artifact_threshold_type="auto",
+            epoch_size_in_cycles=12.0,
+            lowcut_hz=0.5,
+        )
+        logger.info("Running GEDAI pass-1 for ENOVA-only mode …")
+        gedai_res = gedai.run(data, sfreq, ch_names, ref_cov_override=ref_cov)
+
+        ch_result = identify_bad_channels(
+            gedai_res.enova_per_channel,
+            threshold=0.95,
+            data=data,
+        )
+        bad_idx = sorted(ch_result.bad_channels)
+        good_idx = [i for i in range(len(ch_names)) if i not in bad_idx]
+        bad_names = [ch_names[i] for i in bad_idx]
+
+        if bad_idx:
+            logger.info(f"  ENOVA-only bad channels detected: {bad_names}")
+            clean, _ = _interpolate_bad_channels(
+                data, gedai_res.noise, good_idx, bad_idx, bad_names, mne_info, len(ch_names)
+            )
+        else:
+            logger.info("  ENOVA-only: no bad channels detected.")
+            clean = data.copy()
+
+        noise = data - clean
+
+        class ENOVAOnlyResult:
+            def __init__(self, gedai_res, ch_result):
+                self.sensai_score = gedai_res.sensai_score
+                self.mean_enova = gedai_res.mean_enova
+                self.sensai_per_band = gedai_res.sensai_per_band
+                self.bad_channels = ch_result.bad_channels
+                self.flat_channels = ch_result.flat_channels
+                self.enova_per_channel = ch_result.enova_per_channel
+
+        result = ENOVAOnlyResult(gedai_res, ch_result)
+        return clean, noise, result, ref_cov_reg
 
     gedai = GEDAICore(
         artifact_threshold_type="auto",
@@ -236,6 +306,92 @@ def make_butterfly_figure(
         fig.savefig(out_path, dpi=150, bbox_inches="tight")
         logger.info(f"  Saved → {out_path}")
     plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Figure 4b: Per-channel ENOVA bar chart (P300 replacement for SENSAI scatter)
+# ---------------------------------------------------------------------------
+
+def _make_p300_enova_bar(result, ch_names, out_path, dataset_name, subject_id):
+    """Generate a per-channel ENOVA bar chart for P300 datasets.
+
+    Replaces the epoch-level SENSAI scatter which is misleading for ERP data
+    because the P300 component causes the target epochs to look like outliers.
+    """
+    n_ch = len(ch_names)
+    bad_idx = sorted(result.bad_channels) if hasattr(result, "bad_channels") else []
+
+    # Get per-channel ENOVA scores if available, else use uniform
+    enova = None
+    for attr in ("enova_per_channel", "channel_enova", "enova_channels"):
+        if hasattr(result, attr) and getattr(result, attr) is not None:
+            enova = np.array(getattr(result, attr))
+            break
+    if enova is None or len(enova) != n_ch:
+        enova = np.full(n_ch, result.mean_enova if hasattr(result, "mean_enova") else 0.0)
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5), dpi=150,
+                             gridspec_kw={"width_ratios": [3, 1]})
+    fig.patch.set_facecolor("#0F1117")
+
+    # ── Left: per-channel ENOVA bar ──────────────────────────────────────────
+    ax = axes[0]
+    ax.set_facecolor("#1A202C")
+    bar_colors = ["#E53E3E" if i in bad_idx else "#48BB78" for i in range(n_ch)]
+    bars = ax.bar(range(n_ch), enova, color=bar_colors, edgecolor="#2D3748", linewidth=1.2, width=0.65)
+    ax.set_xticks(range(n_ch))
+    ax.set_xticklabels(ch_names, rotation=45, ha="right", fontsize=9, color="#E2E8F0")
+    ax.axhline(0.95, color="#FC8181", lw=1.8, ls="--", alpha=0.9, label="Rejection threshold (t=0.95)")
+    ax.set_ylim(0, max(enova.max() * 1.2, 1.05))
+    ax.set_ylabel("ENOVA Score (artifact fraction)", color="#E2E8F0", fontsize=10)
+    ax.set_xlabel("EEG Channel", color="#E2E8F0", fontsize=10)
+    ax.tick_params(colors="#E2E8F0")
+    for sp in ax.spines.values():
+        sp.set_color("#2D3748")
+    # Annotate bars
+    for i, (bar, val) in enumerate(zip(bars, enova)):
+        ax.text(bar.get_x() + bar.get_width()/2, val + 0.01, f"{val:.3f}",
+                ha="center", va="bottom", color="#E2E8F0", fontsize=7, rotation=90)
+
+    bad_names = [ch_names[i] for i in bad_idx]
+    ax.set_title(
+        f"Per-Channel ENOVA Scores — {dataset_name}  Subject {subject_id}\n"
+        f"Bad channels detected: {bad_names if bad_names else 'None (all channels clean)'}",
+        color="#E2E8F0", fontsize=11, fontweight="bold"
+    )
+    from matplotlib.patches import Patch
+    ax.legend(handles=[
+        Patch(color="#48BB78", label="Clean channel"),
+        Patch(color="#E53E3E", label="Rejected channel"),
+        plt.Line2D([0], [0], color="#FC8181", ls="--", lw=1.8, label="Threshold t=0.95"),
+    ], fontsize=9, facecolor="#2D3748", labelcolor="#E2E8F0", framealpha=0.9)
+
+    # ── Right: summary donut ─────────────────────────────────────────────────
+    ax2 = axes[1]
+    ax2.set_facecolor("#1A202C")
+    n_bad   = len(bad_idx)
+    n_clean = n_ch - n_bad
+    wedge_colors = ["#48BB78", "#E53E3E"] if n_bad > 0 else ["#48BB78"]
+    sizes = [n_clean, n_bad] if n_bad > 0 else [n_clean]
+    lbls  = [f"Clean\n{n_clean}", f"Bad\n{n_bad}"] if n_bad > 0 else [f"Clean\n{n_clean}"]
+    wedges, texts = ax2.pie(sizes, colors=wedge_colors, labels=lbls,
+                            wedgeprops={"width": 0.5, "edgecolor": "#0F1117", "linewidth": 2},
+                            textprops={"color": "#E2E8F0", "fontsize": 11, "fontweight": "bold"})
+    ax2.text(0, 0, f"{n_bad}/{n_ch}\nrejected", ha="center", va="center",
+             color="#E2E8F0", fontsize=12, fontweight="bold")
+    ax2.set_title("Channel\nStatus", color="#E2E8F0", fontsize=10, fontweight="bold")
+
+    sensai_pct = result.sensai_score if hasattr(result, "sensai_score") else 0
+    mean_enova = result.mean_enova   if hasattr(result, "mean_enova") else enova.mean()
+    fig.text(0.5, -0.03,
+             f"SENSAI: {sensai_pct:.1f}%  |  Mean ENOVA: {mean_enova*100:.2f}%  |  "
+             f"{n_ch} channels @ P300 paradigm  |  Note: SENSAI scatter replaced by ENOVA bar for ERP data",
+             ha="center", color="#718096", fontsize=8)
+
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+    logger.info(f"  Saved → {out_path}")
+    plt.close()
 
 
 # ---------------------------------------------------------------------------
@@ -550,7 +706,7 @@ def main():
         description="Generate MATLAB vis_artifacts-equivalent validation plots"
     )
     parser.add_argument("--dataset",  default="Weibo2014",
-                        choices=["Weibo2014", "BNCI2014_001", "Zhou2016", "Shin2017A"])
+                        choices=["Weibo2014", "BNCI2014_001", "Zhou2016", "Shin2017A", "BNCI2014_008", "RomaniBF2025ERP", "BI2013a", "Lee2019_ERP"])
     parser.add_argument("--subject",  type=int, default=1)
     parser.add_argument("--tstart",   type=float, default=0.0,
                         help="Start time (s) for butterfly display window")
@@ -558,6 +714,8 @@ def main():
                         help="End time (s) for butterfly display (default: 60 s)")
     parser.add_argument("--full",     action="store_true",
                         help="Show full recording in butterfly plot (slow)")
+    parser.add_argument("--enova-only", action="store_true",
+                        help="Run in ENOVA-only mode (bypass GED spatial filter, only reject/interpolate bad channels)")
     args = parser.parse_args()
 
     tend = None if args.full else args.tend
@@ -569,14 +727,16 @@ def main():
 
     # ── 2. Run GEDAI ──────────────────────────────────────────────────────────
     clean, noise, result, ref_cov_reg = run_gedai(
-        data_cont, sfreq, ch_names, mne_info
+        data_cont, sfreq, ch_names, mne_info, enova_only=args.enova_only
     )
     logger.info(f"  SENSAI score : {result.sensai_score:.2f} %")
     logger.info(f"  Mean ENOVA   : {result.mean_enova:.4f}")
-    if result.sensai_per_band:
+    if hasattr(result, 'sensai_per_band') and result.sensai_per_band:
         logger.info(f"  SENSAI/band  : {[f'{s:.1f}' for s in result.sensai_per_band]}")
 
     tag = f"{args.dataset}_S{args.subject}"
+    if args.enova_only:
+        tag += "_enova_only"
 
     # ── 3. Butterfly figure ───────────────────────────────────────────────────
     butterfly_path = FIGURES_DIR / f"vis_artifacts_{tag}.png"
@@ -595,7 +755,7 @@ def main():
         subject_id=args.subject,
     )
 
-    # ── 4. SENSAI scatter figure ──────────────────────────────────────────────
+    # ── 4. SENSAI scatter ────────────────────────────────────────────────────
     sensai_path = FIGURES_DIR / f"sensai_scatter_{tag}.png"
     logger.info("Generating SENSAI scatter figure …")
     make_sensai_scatter(
@@ -618,7 +778,7 @@ def main():
     print(f"  Mean ENOVA     : {result.mean_enova:.4f}  ({result.mean_enova*100:.2f} %)")
     print(f"  Channels       : {len(ch_names)}")
     print(f"  Duration       : {data_cont.shape[1]/sfreq:.1f} s @ {sfreq:.0f} Hz")
-    if result.sensai_per_band:
+    if hasattr(result, "sensai_per_band") and result.sensai_per_band:
         print(f"  SENSAI/band    : {[f'{s:.1f}' for s in result.sensai_per_band]}")
     print(f"\n  Figures:")
     print(f"    {butterfly_path}")

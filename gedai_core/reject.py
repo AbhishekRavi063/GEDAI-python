@@ -254,6 +254,19 @@ def two_pass_channel_rejection(
 
     bad = ch_result.bad_channels
     good = [i for i in range(data.shape[0]) if i not in bad]
+
+    if len(good) < 2:
+        logger.warning(
+            f"Too many bad channels identified ({len(bad)}/{data.shape[0]}). "
+            f"Only {len(good)} channel(s) remaining. Aborting Pass 2 rejection and returning Pass 1 result."
+        )
+        ch_result_fallback = ChannelRejectionResult(
+            bad_channels=[],
+            flat_channels=ch_result.flat_channels,
+            enova_per_channel=ch_result.enova_per_channel,
+        )
+        return result_p1.clean, result_p1.noise, ch_result_fallback
+
     data_reduced = data[good, :]
     ch_names_reduced = [ch_names[i] for i in good]
     ref_cov_reduced = ref_cov[np.ix_(good, good)] if ref_cov is not None else None

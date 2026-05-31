@@ -906,6 +906,7 @@ class GEDAICore:
         wavelet: str = "haar",
         lam: float = 0.05,
         broadband_pass: bool = True,        # Match MATLAB: always run broadband pass first
+        output_reference_channel: str | None = None,
     ):
         self.artifact_threshold_type = artifact_threshold_type
         self.epoch_size_in_cycles = epoch_size_in_cycles
@@ -915,6 +916,7 @@ class GEDAICore:
         self.wavelet = wavelet
         self.lam = lam
         self.broadband_pass = broadband_pass
+        self.output_reference_channel = output_reference_channel
 
         self._noise_multiplier = self._parse_noise_multiplier(artifact_threshold_type)
 
@@ -1089,7 +1091,7 @@ class GEDAICore:
             #       current_minThreshold = -6;
             # i.e. -6 for most EEG bands (0.8–60 Hz), 0 only for high-gamma (>60 Hz) and infra-slow (<0.8 Hz)
             center_freq = (flo + fhi) / 2.0
-            s_min = -6.0 if 0.8 <= center_freq <= 60.0 else 0.0
+            s_min = -6.0 if self.lowcut_hz <= center_freq <= 60.0 else 0.0
 
             logger.info(f"Band {band_idx} ({flo:.2f}–{fhi:.2f} Hz) epoch={epoch_size_band:.2f}s, min_t={s_min}")
 
@@ -1122,6 +1124,14 @@ class GEDAICore:
             epoch_size=1.0, noise_multiplier=1.0, n_pc=n_pc,
         )
 
+        # Optional output re-reference to a user-specified channel label (matches MATLAB v1.8)
+        if self.output_reference_channel:
+            clean_final, noise_final, applied_ref = _apply_output_reference(
+                clean_final, noise_final, ch_names, self.output_reference_channel
+            )
+            if applied_ref:
+                logger.info(f"  Applied output reference: {applied_ref}")
+
         return GEDAIResult(
             clean=clean_final,
             noise=noise_final,
@@ -1134,3 +1144,56 @@ class GEDAICore:
             threshold_per_band=threshold_per_band,
             band_limits=band_limits,
         )
+
+
+def _apply_output_reference(
+    clean: np.ndarray,
+    noise: np.ndarray,
+    ch_names: list[str],
+    output_reference_channel: str | None,
+) -> tuple[np.ndarray, np.ndarray, str | None]:
+    """Helper to apply output re-referencing to a channel or average pair (M1+M2, A1+A2, TP9+TP10)."""
+    if not output_reference_channel:
+        return clean, noise, None
+
+    ref_chan = str(output_reference_channel).strip()
+    if not ref_chan:
+        return clean, noise, None
+
+    ch_names_lower = [c.lower() for c in ch_names]
+    ref_signal_clean = None
+    ref_signal_noise = None
+    applied_label = None
+
+    if ref_chan == "__GEDAI_REF_M1M2_AVG__":
+        if "m1" in ch_names_lower and "m2" in ch_names_lower:
+            i1 = ch_names_lower.index("m1")
+            i2 = ch_names_lower.index("m2")
+            ref_signal_clean = (clean[i1] + clean[i2]) / 2.0
+            ref_signal_noise = (noise[i1] + noise[i2]) / 2.0
+            applied_label = "M1+M2(avg)"
+    elif ref_chan == "__GEDAI_REF_A1A2_AVG__":
+        if "a1" in ch_names_lower and "a2" in ch_names_lower:
+            i1 = ch_names_lower.index("a1")
+            i2 = ch_names_lower.index("a2")
+            ref_signal_clean = (clean[i1] + clean[i2]) / 2.0
+            ref_signal_noise = (noise[i1] + noise[i2]) / 2.0
+            applied_label = "A1+A2(avg)"
+    elif ref_chan == "__GEDAI_REF_TP9TP10_AVG__":
+        if "tp9" in ch_names_lower and "tp10" in ch_names_lower:
+            i1 = ch_names_lower.index("tp9")
+            i2 = ch_names_lower.index("tp10")
+            ref_signal_clean = (clean[i1] + clean[i2]) / 2.0
+            ref_signal_noise = (noise[i1] + noise[i2]) / 2.0
+            applied_label = "TP9+TP10(avg)"
+    else:
+        if ref_chan.lower() in ch_names_lower:
+            idx = ch_names_lower.index(ref_chan.lower())
+            ref_signal_clean = clean[idx]
+            ref_signal_noise = noise[idx]
+            applied_label = ch_names[idx]
+
+    if ref_signal_clean is not None and ref_signal_noise is not None:
+        return clean - ref_signal_clean, noise - ref_signal_noise, applied_label
+
+    return clean, noise, None

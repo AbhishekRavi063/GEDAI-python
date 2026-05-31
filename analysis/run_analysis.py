@@ -42,6 +42,7 @@ def main():
         fig8_summary,
         fig9_itr_curve,
         fig10_speller_cost,
+        fig11_gedai_vs_asr,
     )
     import pandas as pd
     df = pd.read_csv(CSV)
@@ -55,6 +56,7 @@ def main():
     fig8_summary(df)
     fig9_itr_curve(df)
     fig10_speller_cost(df)
+    fig11_gedai_vs_asr(df)
 
     print()
     print("=" * 60)

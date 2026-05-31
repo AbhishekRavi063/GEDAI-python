@@ -39,6 +39,7 @@ from datasets.load_moabb import (
 from datasets.preprocess import standard_preprocess, epochs_to_continuous, continuous_to_epochs
 from gedai_core import GEDAICore, GEDAIResult, compute_enova_per_epoch, reject_epochs_by_enova
 from gedai_core.reject import identify_bad_channels, two_pass_channel_rejection
+from gedai_core.asr import ASRCore
 from artifacts import inject_blink, inject_emg, inject_line_noise, ArtifactMeta
 from metrics import (
     compute_all_artifact_metrics,
@@ -106,6 +107,9 @@ class SubjectCache:
 
     # Epoch-level info
     n_ep_total:         int             # total 1-s ENOVA windows
+    
+    # ASR Calibrated Core
+    asr_calibrated:     Optional[ASRCore] = None
 
 
 # ---------------------------------------------------------------------------
@@ -373,9 +377,8 @@ def prepare_subject(
     logger.info("Running GEDAI on test data — two-pass channel rejection …")
     cont_test_corrupted = epochs_to_continuous(X_test_corrupted)
 
-    # Channel ENOVA threshold: fixed at 0.90 (MATLAB default for channels).
-    # We sweep the EPOCH threshold; channel threshold stays fixed.
-    CHANNEL_ENOVA_THRESHOLD = 0.90
+    # Channel ENOVA threshold: optimized at 0.95 (paper recommendation).
+    CHANNEL_ENOVA_THRESHOLD = 0.95
 
     clean_cont_raw, noise_cont_raw, ch_rej_result = two_pass_channel_rejection(
         data=cont_test_corrupted,
@@ -475,6 +478,11 @@ def prepare_subject(
         f"PSD similarity: {pres_m.get('psd_similarity', float('nan')):.3f}"
     )
 
+    # Calibrate ASR baseline model (pristine raw training data)
+    logger.info("Calibrating ASR baseline model...")
+    asr = ASRCore()
+    asr.calibrate(cont_train)
+
     return SubjectCache(
         subject_id=subject_id,
         sfreq=sfreq,
@@ -500,6 +508,258 @@ def prepare_subject(
         trial_duration_sec=trial_dur,
         ref_cov_source=ref_cov_source,
         n_ep_total=n_ep_total,
+        asr_calibrated=asr,
+    )
+
+
+def prepare_subject_d27(
+    subject_id: str,
+    random_seed: int = 42,
+    sliding_window_sec: float = 30.0,
+    dataset_name: str = "Dataset27_GEL",
+    inject_artifacts: bool = False,
+) -> SubjectCache:
+    """Run everything that doesn't depend on the ENOVA threshold for Dataset 27.
+
+    Runs GEDAI on the full continuous signal first, then extracts epochs.
+    Matches the GEDAI FAQ / best-practice recommendations for non-stationary,
+    long continuous recordings.
+    """
+    from datasets.load_dataset27 import load_dataset27_subject
+    from gedai_core.sliding_window import SlidingWindowGEDAI
+    from gedai_core import GEDAIResult
+    from gedai_core.reject import two_pass_channel_rejection
+    from gedai_core.enova import compute_enova_per_epoch, compute_enova_per_channel
+
+    logger.info(f"=== Preparing Dataset 27 subject {subject_id} from {dataset_name} ===")
+
+    # 1. Load the continuous signal
+    subject_data = load_dataset27_subject(
+        subject_id=subject_id,
+        electrode_type=dataset_name,
+        hp_hz=1.0,
+        window_sec=1.0,
+    )
+
+    sfreq = subject_data["sfreq"]
+    ch_names = subject_data["ch_names"]
+    continuous_signal = subject_data["continuous_signal"]
+    event_samples = subject_data["event_samples"]
+    event_labels = subject_data["event_labels"]
+    trial_dur = subject_data["trial_duration_sec"]
+    mne_info = subject_data["eeg_epochs"].info.copy()
+
+    n_ch, n_samples = continuous_signal.shape
+    n_times = int(round(trial_dur * sfreq))  # 256 samples (1.0 s)
+
+    # 2. Reference Covariance
+    ref_cov = None
+    ref_cov_source = "none"
+    import mne
+    picks_eeg = mne.pick_types(mne_info, eeg=True, exclude=[])
+    ch_positions = np.array([
+        mne_info["chs"][i]["loc"][:3]
+        for i in picks_eeg
+    ])
+    has_valid_positions = (
+        np.all(np.isfinite(ch_positions)) and not np.allclose(ch_positions, 0)
+    )
+
+    if has_valid_positions:
+        try:
+            from gedai_core.leadfield import load_interpolated_leadfield
+            ref_cov = load_interpolated_leadfield(ch_names, ch_positions)
+            ref_cov_source = "interpolated"
+            logger.info("  Using INTERPOLATED leadfield (BEM warped to actual positions).")
+        except Exception as exc:
+            logger.warning(f"  Interpolated leadfield failed: {exc}")
+
+    if ref_cov is None:
+        try:
+            from gedai_core.leadfield import load_precomputed_leadfield
+            ref_cov = load_precomputed_leadfield(ch_names)
+            ref_cov_source = "precomputed"
+            logger.info("  Using precomputed leadfield (BEM Gram lookup).")
+        except Exception as exc:
+            logger.warning(f"  Precomputed leadfield not available: {exc}")
+            if has_valid_positions:
+                try:
+                    from gedai_core.leadfield import get_reference_cov
+                    ref_cov = get_reference_cov("channel_positions", ch_names, ch_positions)
+                    ref_cov_source = "channel_positions"
+                    logger.info("  Using channel-position-based reference covariance (fallback).")
+                except Exception as exc2:
+                    logger.warning(f"  Channel-position fallback also failed: {exc2}")
+                    ref_cov = None
+
+    logger.info(f"  Reference covariance source: {ref_cov_source}")
+
+    # 3. Two-pass Channel Rejection on continuous signal
+    # If sliding_window_sec is np.inf, default to 30.0s for continuous data (OOM safety)
+    if np.isinf(sliding_window_sec) or sliding_window_sec is None:
+        logger.info("  Sliding window size is infinite. Forcing 30.0 s to avoid continuous OOM/instability.")
+        sliding_window_sec = 30.0
+
+    gedai_kwargs = dict(
+        artifact_threshold_type="auto",
+        epoch_size_in_cycles=12.0,
+        lowcut_hz=0.5,
+        smoothing_window_sec=sliding_window_sec,
+    )
+
+    logger.info(f"  Sliding-window GEDAI configuration: window={sliding_window_sec}s")
+
+    # Run two-pass channel rejection
+    CHANNEL_ENOVA_THRESHOLD = 0.95
+    clean_cont_raw, noise_cont_raw, ch_rej_result = two_pass_channel_rejection(
+        data=continuous_signal,
+        sfreq=sfreq,
+        ch_names=ch_names,
+        enova_threshold_channel=CHANNEL_ENOVA_THRESHOLD,
+        gedai_kwargs=gedai_kwargs,
+        ref_cov=ref_cov,
+    )
+
+    bad_ch_idx  = list(ch_rej_result.bad_channels)
+    good_ch_idx = [i for i in range(n_ch) if i not in bad_ch_idx]
+
+    if bad_ch_idx:
+        bad_names = [ch_names[i] for i in bad_ch_idx]
+        logger.info(f"  Bad channels removed: {bad_names}")
+        logger.info("  Interpolating bad channels back via MNE spherical spline …")
+
+        clean_full, noise_full = _interpolate_bad_channels(
+            clean_cont_raw, noise_cont_raw,
+            good_ch_idx, bad_ch_idx, bad_names,
+            mne_info, n_ch,
+        )
+    else:
+        logger.info("  No bad channels found — using single-pass result.")
+        clean_full = clean_cont_raw
+        noise_full = noise_cont_raw
+
+    # 4. Extract original and cleaned epochs using event_samples
+    logger.info("  Extracting epochs from raw and cleaned continuous signals …")
+    X_clean = np.zeros((len(event_samples), n_ch, n_times), dtype=np.float32)
+    X_cleaned = np.zeros((len(event_samples), n_ch, n_times), dtype=np.float32)
+    X_noise = np.zeros((len(event_samples), n_ch, n_times), dtype=np.float32)
+
+    for i, onset in enumerate(event_samples):
+        X_clean[i] = continuous_signal[:, onset : onset + n_times]
+        X_cleaned[i] = clean_full[:, onset : onset + n_times]
+        X_noise[i] = noise_full[:, onset : onset + n_times]
+
+    # 5. Train/test split using stratified randomized split (balanced)
+    from sklearn.model_selection import train_test_split
+    idx = np.arange(len(event_labels))
+    idx_train, idx_test = train_test_split(
+        idx,
+        test_size=0.2,
+        stratify=event_labels,
+        random_state=random_seed,
+        shuffle=True,
+    )
+
+    X_train_clean = X_clean[idx_train]
+    X_train_cleaned = X_cleaned[idx_train]
+    y_train = event_labels[idx_train]
+
+    X_test_clean = X_clean[idx_test]
+    X_test_cleaned = X_cleaned[idx_test]
+    y_test = event_labels[idx_test]
+
+    X_noise_test = X_noise[idx_test]
+
+    logger.info(f"  Train: {len(X_train_clean)} | Test: {len(X_test_clean)}")
+
+    # 6. Reconstruct test continuous signals by concatenating test epochs
+    corrupted_cont = epochs_to_continuous(X_test_clean)
+    clean_ref_cont = epochs_to_continuous(X_test_clean)
+    cleaned_cont   = epochs_to_continuous(X_test_cleaned)
+    noise_cont     = epochs_to_continuous(X_noise_test)
+
+    # 7. Build GEDAIResult object for the test set
+    enova_epoch   = compute_enova_per_epoch(cleaned_cont, noise_cont, n_times)
+    enova_channel = compute_enova_per_channel(cleaned_cont, noise_cont, n_times)
+    for i in bad_ch_idx:
+        enova_channel[i] = np.inf   # bad channels always flagged
+
+    result_test = GEDAIResult(
+        clean=cleaned_cont,
+        noise=noise_cont,
+        enova_per_epoch=enova_epoch,
+        enova_per_channel=enova_channel,
+        mean_enova=float(np.mean(enova_epoch)),
+        sensai_score=0.0,
+        sensai_per_band=[],
+        enova_per_band=[],
+        threshold_per_band=[],
+        band_limits=[],
+    )
+
+    n_ep_total = len(enova_epoch)
+    corrupted_windows = set()   # no synthetic injection
+
+    # 8. Pre-compute metrics
+    logger.info("Pre-computing artifact & preservation metrics …")
+    artifact_m = compute_all_artifact_metrics(
+        clean_ref_cont, corrupted_cont, cleaned_cont,
+        sfreq=sfreq, artifact_type="mixed",
+    )
+
+    X_clean_only         = X_test_clean
+    X_cleaned_only       = X_test_cleaned
+    y_clean_only         = y_test
+    clean_ref_cont_only  = clean_ref_cont
+    cleaned_cont_only    = cleaned_cont
+    n_clean_cont         = clean_ref_cont_only.shape[1]
+
+    pres_m = compute_all_preservation_metrics(
+        clean_ref_cont_only,
+        cleaned_cont_only[:, :n_clean_cont],
+        sfreq, ch_names,
+        clean_epochs=X_clean_only,
+        cleaned_epochs=X_cleaned_only,
+        labels=y_clean_only,
+    )
+
+    logger.info(
+        f"  SNR improvement: {artifact_m.get('snr_improvement_db', float('nan')):.2f} dB | "
+        f"PSD similarity: {pres_m.get('psd_similarity', float('nan')):.3f}"
+    )
+
+    # Calibrate ASR baseline model
+    logger.info("Calibrating ASR baseline model...")
+    cont_train = epochs_to_continuous(X_train_clean)
+    asr = ASRCore()
+    asr.calibrate(cont_train)
+
+    return SubjectCache(
+        subject_id=subject_id,
+        sfreq=sfreq,
+        ch_names=ch_names,
+        n_times=n_times,
+        X_train_clean=X_train_clean,
+        X_train_cleaned=X_train_cleaned,
+        y_train=y_train,
+        X_test_clean=X_test_clean,
+        X_test_cleaned=X_test_cleaned,
+        y_test=y_test,
+        result_test=result_test,
+        clean_ref_cont=clean_ref_cont,
+        corrupted_cont=corrupted_cont,
+        cleaned_cont=cleaned_cont,
+        corrupted_windows=corrupted_windows,
+        artifact_metrics=artifact_m,
+        preservation_metrics=pres_m,
+        bad_channel_indices=bad_ch_idx,
+        good_channel_indices=good_ch_idx,
+        mne_info=mne_info,
+        dataset_name=dataset_name,
+        trial_duration_sec=trial_dur,
+        ref_cov_source=ref_cov_source,
+        n_ep_total=n_ep_total,
+        asr_calibrated=asr,
     )
 
 
@@ -560,13 +820,53 @@ def apply_threshold(cache: SubjectCache, enova_threshold: float) -> dict:
 
     n_orig_kept = int(np.sum(orig_epoch_kept))
 
+    # -- ASR Denoising and Rejection Comparison --
+    if enova_threshold >= 1.0:
+        asr_k = np.inf
+    else:
+        # Map 0.50 -> 5.0, 0.90 -> 15.0, 1.00 -> Inf
+        asr_k = 5.0 + (enova_threshold - 0.50) * 25.0
+
+    X_test_corrupted_epochs = continuous_to_epochs(
+        cache.corrupted_cont, len(cache.X_test_clean), cache.n_times
+    )
+    X_test_cleaned_asr = np.zeros_like(cache.X_test_clean)
+    epochs_rejected_asr = np.zeros(len(cache.X_test_clean), dtype=bool)
+
+    if cache.asr_calibrated is not None:
+        cache.asr_calibrated.cutoff_k = asr_k
+        if np.isinf(asr_k):
+            cache.asr_calibrated.rejection_ratio = 1.1  # never reject
+        else:
+            cache.asr_calibrated.rejection_ratio = 0.30
+            
+        for ep_idx in range(len(cache.X_test_clean)):
+            clean_ep, rej = cache.asr_calibrated.clean_epoch(X_test_corrupted_epochs[ep_idx])
+            X_test_cleaned_asr[ep_idx] = clean_ep
+            epochs_rejected_asr[ep_idx] = rej
+
+    # Process train data through ASR (always k=15.0, no rejection) to keep splits matched
+    X_train_cleaned_asr = np.zeros_like(cache.X_train_clean)
+    if cache.asr_calibrated is not None:
+        temp_k = cache.asr_calibrated.cutoff_k
+        temp_ratio = cache.asr_calibrated.rejection_ratio
+        cache.asr_calibrated.cutoff_k = 15.0
+        cache.asr_calibrated.rejection_ratio = 1.1  # keep all
+        
+        for ep_idx in range(len(cache.X_train_clean)):
+            clean_ep, _ = cache.asr_calibrated.clean_epoch(cache.X_train_clean[ep_idx])
+            X_train_cleaned_asr[ep_idx] = clean_ep
+            
+        cache.asr_calibrated.cutoff_k = temp_k
+        cache.asr_calibrated.rejection_ratio = temp_ratio
+
     # -- Decoding (three conditions) --
     binary_mask      = np.isin(y_test, [1, 2])
     binary_kept_mask = binary_mask & orig_epoch_kept
 
     # Riemannian classifier for datasets where CSP+LDA underperforms
     # (Weibo2014: ba_baseline < 0.5 with CSP+LDA due to weak spatial MI signal)
-    clf = "riemannian" if cache.dataset_name == "Weibo2014" else "csp_lda"
+    clf = "riemannian" if cache.dataset_name == "Weibo2014" or cache.dataset_name.startswith("Dataset27_") else "csp_lda"
     logger.info(f"  Classifier: {clf}")
 
     dec_baseline    = {}
@@ -617,6 +917,27 @@ def apply_threshold(cache: SubjectCache, enova_threshold: float) -> dict:
     ba_reconstruct = dec_reconstruct.get("balanced_accuracy", float("nan"))
     ba_reject_keep = dec_reject.get("balanced_accuracy", float("nan"))
 
+    # -- Evaluate ASR Decoders --
+    ba_reconstruct_asr = float("nan")
+    ba_reject_keep_asr = float("nan")
+    
+    if binary_mask_train.sum() >= min_train and binary_mask.sum() >= min_test:
+        dec_reconstruct_asr = train_test_balanced_accuracy(
+            X_train_cleaned_asr[binary_mask_train], cache.y_train[binary_mask_train],
+            X_test_cleaned_asr[binary_mask],        y_test[binary_mask],
+            classifier=clf,
+        )
+        ba_reconstruct_asr = dec_reconstruct_asr.get("balanced_accuracy", float("nan"))
+        
+    asr_kept_mask = binary_mask & (~epochs_rejected_asr)
+    if binary_mask_train.sum() >= min_train and asr_kept_mask.sum() >= min_test:
+        dec_reject_asr = train_test_balanced_accuracy(
+            X_train_cleaned_asr[binary_mask_train],  cache.y_train[binary_mask_train],
+            X_test_cleaned_asr[asr_kept_mask],       y_test[asr_kept_mask],
+            classifier=clf,
+        )
+        ba_reject_keep_asr = dec_reject_asr.get("balanced_accuracy", float("nan"))
+
     # ---------------------------------------------------------------
     # Information Transfer Rate (Wolpaw + Gemini/Ros effective ITR)
     # ---------------------------------------------------------------
@@ -628,6 +949,18 @@ def apply_threshold(cache: SubjectCache, enova_threshold: float) -> dict:
             ba_reject_keep=ba_reject_keep,
             ba_reconstruct=ba_reconstruct,
             pct_retained=pct_retained,
+            n_classes=2,
+            trial_duration_sec=cache.trial_duration_sec,
+        )
+
+    # Compute ASR ITR Metrics
+    pct_retained_asr = 100.0 * (len(cache.X_test_clean) - np.sum(epochs_rejected_asr)) / max(len(cache.X_test_clean), 1)
+    itr_m_asr = {}
+    if not np.isnan(ba_reject_keep_asr) and not np.isnan(ba_reconstruct_asr):
+        itr_m_asr = compute_itr_metrics(
+            ba_reject_keep=ba_reject_keep_asr,
+            ba_reconstruct=ba_reconstruct_asr,
+            pct_retained=pct_retained_asr,
             n_classes=2,
             trial_duration_sec=cache.trial_duration_sec,
         )
@@ -696,6 +1029,16 @@ def apply_threshold(cache: SubjectCache, enova_threshold: float) -> dict:
         "itr_delta_vs_reconstruct":    itr_m.get("itr_delta_vs_reconstruct", float("nan")),
         "actions_per_letter_reject":   itr_m.get("actions_per_letter_reject", float("nan")),
         "actions_per_letter_reconstruct": itr_m.get("actions_per_letter_reconstruct", float("nan")),
+        
+        # ASR comparative results
+        "asr_k_cutoff":                  asr_k,
+        "pct_retained_asr":              pct_retained_asr,
+        "ba_reconstruct_asr":            ba_reconstruct_asr,
+        "ba_reject_keep_asr":            ba_reject_keep_asr,
+        "rejection_rate_asr":            itr_m_asr.get("rejection_rate", float("nan")),
+        "itr_effective_asr":             itr_m_asr.get("itr_effective_reject", float("nan")),
+        "itr_bits_per_min_asr":          itr_m_asr.get("itr_bits_per_min_reject", float("nan")),
+        "actions_per_letter_asr":        itr_m_asr.get("actions_per_letter_reject", float("nan")),
     }
 
 

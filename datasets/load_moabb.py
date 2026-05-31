@@ -321,3 +321,12 @@ def split_train_test(
         shuffle=True,
     )
     return data[idx_train], labels[idx_train], data[idx_test], labels[idx_test]
+
+
+# Dynamically integrate Dataset 27 into the MOABB dataset registry
+try:
+    from datasets.load_dataset27 import DATASET27_REGISTRY
+    DATASET_REGISTRY.update(DATASET27_REGISTRY)
+except ImportError:
+    pass
+

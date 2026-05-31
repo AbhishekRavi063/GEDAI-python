@@ -43,8 +43,9 @@ def parse_args():
                         help="Sliding window size in seconds for GEDAI (default: disabled)")
     parser.add_argument("--datasets", nargs="+",
                         default=["BNCI2014_001"],
-                        choices=["BNCI2014_001", "Zhou2016", "Weibo2014", "Shin2017A"],
-                        help="MOABB datasets to use (default: BNCI2014_001)")
+                        choices=["BNCI2014_001", "Zhou2016", "Weibo2014", "Shin2017A",
+                                 "Dataset27_GEL", "Dataset27_WATER", "Dataset27_DRY"],
+                        help="MOABB/Dataset27 datasets to use (default: BNCI2014_001)")
     return parser.parse_args()
 
 

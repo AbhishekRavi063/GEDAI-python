@@ -21,7 +21,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from experiments.run_single_subject import prepare_subject, apply_threshold
+from experiments.run_single_subject import prepare_subject, prepare_subject_d27, apply_threshold
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -57,17 +57,36 @@ def run_threshold_sweep(
 
     for ds_name in datasets:
         # Resolve subjects for THIS dataset
-        try:
-            from datasets.load_moabb import DATASET_REGISTRY
-            import moabb.datasets as _mds
-            dataset_cls = getattr(_mds, ds_name)
-            full_subjects = dataset_cls().subject_list
-        except Exception:
-            full_subjects = subjects
+        if ds_name.startswith("Dataset27_"):
+            try:
+                from datasets.load_dataset27 import DATASET27_REGISTRY
+                full_subjects = DATASET27_REGISTRY[ds_name]["subjects"]
+            except Exception as exc:
+                logger.error(f"Failed to load DATASET27_REGISTRY for {ds_name}: {exc}")
+                full_subjects = subjects
+        else:
+            try:
+                from datasets.load_moabb import DATASET_REGISTRY
+                import moabb.datasets as _mds
+                dataset_cls = getattr(_mds, ds_name)
+                full_subjects = dataset_cls().subject_list
+            except Exception:
+                full_subjects = subjects
 
         # If user passed --subjects 1 2 ..., respect it but cap to what dataset has
         if subjects and len(subjects) > 0 and subjects != [1, 2]:
-            subj_list = [s for s in subjects if s in full_subjects]
+            if ds_name.startswith("Dataset27_"):
+                # Map integer indices (1-based) to the string subjects in the registry
+                subj_list = []
+                for s in subjects:
+                    if isinstance(s, int):
+                        idx = s - 1
+                        if 0 <= idx < len(full_subjects):
+                            subj_list.append(full_subjects[idx])
+                    elif s in full_subjects:
+                        subj_list.append(s)
+            else:
+                subj_list = [s for s in subjects if s in full_subjects]
         else:
             subj_list = full_subjects
 
@@ -81,14 +100,23 @@ def run_threshold_sweep(
         for s_idx, subj in enumerate(subj_list, 1):
             logger.info(f"[{ds_name} | Subject {s_idx}/{len(subj_list)}] Preparing subject {subj}…")
             try:
-                cache = prepare_subject(
-                    subject_id=subj,
-                    artifact_types=artifact_types,
-                    random_seed=random_seed,
-                    sliding_window_sec=sliding_window_sec,
-                    dataset_name=ds_name,
-                    inject_artifacts=inject_arts,
-                )
+                if ds_name.startswith("Dataset27_"):
+                    cache = prepare_subject_d27(
+                        subject_id=subj,
+                        random_seed=random_seed,
+                        sliding_window_sec=sliding_window_sec,
+                        dataset_name=ds_name,
+                        inject_artifacts=inject_arts,
+                    )
+                else:
+                    cache = prepare_subject(
+                        subject_id=subj,
+                        artifact_types=artifact_types,
+                        random_seed=random_seed,
+                        sliding_window_sec=sliding_window_sec,
+                        dataset_name=ds_name,
+                        inject_artifacts=inject_arts,
+                    )
             except Exception as exc:
                 logger.error(f"{ds_name} S{subj} prep failed: {exc}")
                 import traceback; traceback.print_exc()

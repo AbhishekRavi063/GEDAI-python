@@ -822,6 +822,62 @@ def fig10_speller_cost(df: pd.DataFrame) -> None:
     print(f"  Saved: {out}")
 
 
+# ── Figure 11: GEDAI vs. ASR Comparative Benchmark (Option A) ────────────────
+
+def fig11_gedai_vs_asr(df: pd.DataFrame) -> None:
+    """ASR vs. GEDAI comparative benchmark curve.
+
+    Plots Effective ITR vs Threshold / Cutoff for both algorithms.
+    """
+    if "itr_effective_asr" not in df.columns:
+        print("  Skipping Fig 11 (no ASR columns in CSV).")
+        return
+
+    thresholds = sorted(df["enova_threshold"].unique())
+    x = np.arange(len(thresholds))
+
+    # Mean ITR across subjects
+    gedai_itr = [df[df["enova_threshold"] == t]["itr_effective_reject"].mean() for t in thresholds]
+    asr_itr   = [df[df["enova_threshold"] == t]["itr_effective_asr"].mean()    for t in thresholds]
+    
+    # 95% CI from SEM
+    gedai_se = [_err(df[df["enova_threshold"] == t]["itr_effective_reject"].dropna().values) for t in thresholds]
+    asr_se   = [_err(df[df["enova_threshold"] == t]["itr_effective_asr"].dropna().values)    for t in thresholds]
+
+    fig, ax = plt.subplots(figsize=(8, 5.5))
+    
+    ax.errorbar(x, gedai_itr, yerr=gedai_se, marker="o", linewidth=2.5,
+                color="#1976D2", capsize=4, label="GEDAI (frequency-resolved multiscale)",
+                markersize=6)
+    
+    ax.errorbar(x, asr_itr, yerr=asr_se, marker="s", linewidth=2.5,
+                color="#E53935", capsize=4, label="ASR (broadband subspace projection)",
+                markersize=6)
+
+    # Annotate ASR standard-deviation cutoff k mapped at each threshold
+    for i, t in enumerate(thresholds):
+        if t >= 1.0:
+            k_str = "Inf"
+        else:
+            k_str = f"{5.0 + (t - 0.50) * 25.0:.1f}"
+        ax.annotate(f"k={k_str}", (i, asr_itr[i]), textcoords="offset points",
+                    xytext=(0,-15), ha="center", fontsize=7.5, color="#D32F2F")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"{t:.2f}" for t in thresholds])
+    ax.set_xlabel("Rejection Strictness (ENOVA Threshold / Mapped ASR Cutoff k)")
+    ax.set_ylabel("Effective ITR (bits / trial)")
+    ax.set_title("Fig 11 — BCI Speed Benchmark: GEDAI vs. ASR\n(Reject+Keep strategy, mean ± SEM, across all subjects)")
+    ax.legend(loc="upper left")
+    ax.grid(True, alpha=0.3)
+    
+    fig.tight_layout()
+    out = FIGURES_DIR / "fig11_gedai_vs_asr.png"
+    fig.savefig(out, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {out}")
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
@@ -850,6 +906,7 @@ def main():
     fig8_summary(df)
     fig9_itr_curve(df)
     fig10_speller_cost(df)
+    fig11_gedai_vs_asr(df)
 
     print("\nAll figures saved.")
 
