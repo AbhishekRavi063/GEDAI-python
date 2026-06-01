@@ -89,7 +89,7 @@ DATASET27_REGISTRY = {
     },
     "Dataset27_DRY": {
         "subjects":          DRY_SUBJECTS,
-        "n_eeg_ch":          12,
+        "n_eeg_ch":          11,
         "gedai_mode":        "full",        # FAQ: 12ch is above 6ch minimum; run full GEDAI
         "trial_duration_sec": EPOCH_WINDOW_SEC,
         "classifier":        "riemannian",
@@ -122,10 +122,6 @@ def _load_mat_file(fpath: Path) -> dict:
 
     sfreq = int(h.sample_rate.flat[0])
 
-    # EEG channel indices (1-based in MATLAB → 0-based in Python)
-    eeg_idx = h.channels_eeg.flatten().astype(int) - 1
-    eeg_sig = sig[eeg_idx, :]
-
     # Channel names  — field is 'channels_labels' in Dataset 27
     def _ch_names(field):
         names = []
@@ -138,7 +134,19 @@ def _load_mat_file(fpath: Path) -> dict:
         return names
 
     all_ch_names = _ch_names(h.channels_labels)
-    eeg_ch_names = [all_ch_names[i] for i in eeg_idx]
+
+    # EEG channel indices (1-based in MATLAB → 0-based in Python)
+    eeg_idx = h.channels_eeg.flatten().astype(int) - 1
+    eeg_idx_list = eeg_idx.tolist()
+    eeg_ch_names = [all_ch_names[i] for i in eeg_idx_list]
+
+    # Drop A2 reference channel if it exists in the EEG channels list
+    if "A2" in eeg_ch_names:
+        a2_pos = eeg_ch_names.index("A2")
+        eeg_idx_list = [i for j, i in enumerate(eeg_idx_list) if j != a2_pos]
+        eeg_ch_names = [all_ch_names[i] for i in eeg_idx_list]
+
+    eeg_sig = sig[eeg_idx_list, :]
 
     # EOG channels
     try:
@@ -169,30 +177,44 @@ def _load_mat_file(fpath: Path) -> dict:
 def _preprocess_continuous(
     sig: np.ndarray,
     sfreq: int,
-    hp_hz: float = 1.0,
+    hp_hz: float = 0.3,
+    lp_hz: float = 35.0,
+    use_car: bool = True,
 ) -> np.ndarray:
-    """Per-channel DC removal + high-pass filter.
+    """Per-channel DC removal + 0.3-35.0 Hz band-pass filter + CAR.
 
-    MOABB's MotorImagery paradigm applies a 0.5 Hz HPF before epoching.
-    We apply 1.0 Hz here (slightly more aggressive) to also handle the
-    very large DC offsets in water/dry electrode recordings.
+    This matches the exact classification frequency range used in the reference
+    paper (Schwarz et al. 2020: 0.3-35 Hz). We use a 0.3 Hz high-pass cutoff to
+    preserve movement-related cortical potentials (MRCPs), a 35 Hz low-pass cutoff
+    to naturally eliminate 50 Hz power line noise, and a Common Average Reference
+    (CAR) filter to remove common-mode noise across channels.
 
     Parameters
     ----------
-    sig   : (n_ch, n_samples)
-    sfreq : sampling rate in Hz
-    hp_hz : high-pass cutoff (default 1.0 Hz)
+    sig     : (n_ch, n_samples)
+    sfreq   : sampling rate in Hz
+    hp_hz   : high-pass cutoff (default 0.3 Hz)
+    lp_hz   : low-pass cutoff (default 35.0 Hz)
+    use_car : whether to apply Common Average Reference (default True)
 
     Returns
     -------
-    sig_filtered : (n_ch, n_samples)  in µV, DC-removed and HP-filtered
+    sig_filtered : (n_ch, n_samples) in µV, DC-removed, filtered and referenced
     """
     # 1. Per-channel mean subtraction (removes DC offset)
     sig = sig - sig.mean(axis=1, keepdims=True)
 
-    # 2. 4th-order Butterworth high-pass filter
-    b, a = butter(4, hp_hz / (sfreq / 2.0), btype="high")
+    # 2. 4th-order Butterworth bandpass filter
+    from scipy.signal import butter, filtfilt
+    nyq = sfreq / 2.0
+    low = hp_hz / nyq
+    high = min(lp_hz / nyq, 0.99)
+    b, a = butter(4, [low, high], btype="bandpass")
     sig = filtfilt(b, a, sig, axis=1)
+
+    # 3. Common Average Reference (CAR) spatial filter
+    if use_car:
+        sig = sig - sig.mean(axis=0, keepdims=True)
 
     return sig.astype(np.float64)
 
@@ -329,8 +351,9 @@ def _build_mne_epochs(
 def load_dataset27_subject(
     subject_id: str,
     electrode_type: str,
-    hp_hz: float = 1.0,
+    hp_hz: float = 0.3,
     window_sec: float = EPOCH_WINDOW_SEC,
+    use_car: bool = True,
 ) -> dict:
     """Load one Dataset 27 subject and return a pipeline-compatible dict.
 
@@ -338,8 +361,9 @@ def load_dataset27_subject(
     ----------
     subject_id     : e.g. "G01", "V06", "H01"
     electrode_type : "Dataset27_GEL" | "Dataset27_WATER" | "Dataset27_DRY"
-    hp_hz          : high-pass filter cutoff in Hz (default 1.0)
+    hp_hz          : high-pass filter cutoff in Hz (default 0.3)
     window_sec     : epoch window in seconds (default 1.0, Schwarz et al. 2020)
+    use_car        : whether to apply Common Average Reference (default True)
 
     Returns
     -------
@@ -359,8 +383,8 @@ def load_dataset27_subject(
 
     logger.info(f"  {len(ch_names)} EEG ch | {eeg_sig.shape[1]/sfreq/60:.1f} min | {sfreq} Hz")
 
-    # Preprocessing: DC removal + HP filter (matches MOABB paradigm)
-    eeg_sig_pp = _preprocess_continuous(eeg_sig, sfreq, hp_hz=hp_hz)
+    # Preprocessing: DC removal + bandpass filter + CAR
+    eeg_sig_pp = _preprocess_continuous(eeg_sig, sfreq, hp_hz=hp_hz, use_car=use_car)
 
     # Epoch extraction
     epochs, labels, onset_samples = _extract_epochs(
@@ -395,8 +419,9 @@ def load_dataset27_subject(
 def load_dataset27(
     electrode_type: str,
     subjects: Optional[list[str]] = None,
-    hp_hz: float = 1.0,
+    hp_hz: float = 0.3,
     window_sec: float = EPOCH_WINDOW_SEC,
+    use_car: bool = True,
 ) -> dict[str, dict]:
     """Load multiple Dataset 27 subjects.
 
@@ -405,8 +430,9 @@ def load_dataset27(
     electrode_type : "Dataset27_GEL" | "Dataset27_WATER" | "Dataset27_DRY"
     subjects       : list of subject IDs (e.g. ["G01", "G02"]).
                      If None, loads all subjects for this electrode type.
-    hp_hz          : high-pass cutoff in Hz
-    window_sec     : epoch window in seconds
+    hp_hz          : high-pass cutoff in Hz (default 0.3)
+    window_sec     : epoch window in seconds (default 1.0)
+    use_car        : whether to apply Common Average Reference (default True)
 
     Returns
     -------
@@ -430,7 +456,9 @@ def load_dataset27(
     result = {}
     for sid in subjects:
         try:
-            result[sid] = load_dataset27_subject(sid, electrode_type, hp_hz, window_sec)
+            result[sid] = load_dataset27_subject(
+                sid, electrode_type, hp_hz=hp_hz, window_sec=window_sec, use_car=use_car
+            )
         except Exception as exc:
             logger.error(f"Failed to load {sid}: {exc}")
     return result

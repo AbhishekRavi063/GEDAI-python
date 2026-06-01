@@ -537,7 +537,7 @@ def prepare_subject_d27(
     subject_data = load_dataset27_subject(
         subject_id=subject_id,
         electrode_type=dataset_name,
-        hp_hz=1.0,
+        hp_hz=0.3,
         window_sec=1.0,
     )
 

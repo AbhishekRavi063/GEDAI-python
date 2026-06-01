@@ -120,17 +120,25 @@ def load_dataset27(electrode_type: str, subject_idx: int):
         f"({data_cont.shape[1]/sfreq:.1f} s)"
     )
 
-    # Dry electrodes have severe DC drift from impedance changes.
-    # Apply linear detrend per channel to remove slow ramp before GEDAI.
+    # 1. DC drift removal: Detrend for dry electrodes; mean subtraction for all
     if electrode_type == "dry":
         from scipy.signal import detrend
         logger.info("  Applying linear detrend (dry electrode DC drift removal) …")
         data_cont = detrend(data_cont, axis=1, type="linear")
-        # Also apply stronger HP filter (1.0 Hz) to catch residual slow drift
-        from scipy.signal import butter, filtfilt
-        b, a = butter(4, 1.0 / (sfreq / 2), btype="high")
-        data_cont = filtfilt(b, a, data_cont, axis=1)
-        logger.info("  Detrend + 1 Hz HP filter applied.")
+    else:
+        # Per-channel mean subtraction
+        data_cont = data_cont - data_cont.mean(axis=1, keepdims=True)
+
+    # 2. 0.3 - 35.0 Hz bandpass filter to remove slow DC drift, preserve MRCPs, and eliminate 50 Hz line noise
+    from scipy.signal import butter, filtfilt
+    nyq = sfreq / 2.0
+    b, a = butter(4, [0.3 / nyq, 35.0 / nyq], btype="bandpass")
+    data_cont = filtfilt(b, a, data_cont, axis=1)
+    logger.info("  0.3 - 35.0 Hz band-pass filter applied.")
+
+    # 3. Common Average Reference (CAR)
+    logger.info("  Applying Common Average Reference (CAR) …")
+    data_cont = data_cont - data_cont.mean(axis=0, keepdims=True)
 
     # Events
     codes     = evs["codes"].flatten()
