@@ -156,7 +156,9 @@ def _sensai_score_cached(
         )
 
     n_ep = len(all_eigenvalues)
+    n_ch = all_eigenvalues.shape[1]
     sig_sims = np.zeros(n_ep, dtype=np.float64)
+
     noi_sims = np.zeros(n_ep, dtype=np.float64)
 
     # 2-step QR uses ref_evecs as the initial guess (matches MATLAB SENSAI.m)
@@ -170,40 +172,43 @@ def _sensai_score_cached(
         good_mask = ~bad_mask                          # signal components
 
         # ── Analytical noise covariance ──────────────────────────────
-        # cov_noise = R @ V_bad @ diag(d_bad) @ V_bad.T @ R  (R = refCOV_reg)
-        # Done efficiently as: V_bad_rows = V_bad.T @ R  → cov_noise = V_bad_rows.T @ (V_bad_rows * d_bad)
+        cov_noise = np.zeros((n_ch, n_ch), dtype=np.float64)
         if bad_mask.any():
             V_bad = evecs[:, bad_mask]
             V_bad_rows = V_bad.T @ ref_cov_reg
             d_bad = evals[bad_mask][:, None]
             cov_noise = V_bad_rows.T @ (V_bad_rows * d_bad)
             cov_noise = (cov_noise + cov_noise.T) / 2
-            # 2-step QR fast subspace iteration (matches MATLAB SENSAI.m)
-            try:
-                Y1_n = cov_noise @ template
-                Q1_n, _ = np.linalg.qr(Y1_n)
-                Y2_n = cov_noise @ Q1_n
-                basis_n, _ = np.linalg.qr(Y2_n)
-                noi_sims[i] = subspace_similarity(basis_n, ref_evecs)
-            except (np.linalg.LinAlgError, ValueError):
-                noi_sims[i] = 0.0
+        
+        # 2-step QR fast subspace iteration (matches MATLAB SENSAI.m)
+        try:
+            Y1_n = cov_noise @ template
+            Q1_n, _ = np.linalg.qr(Y1_n)
+            Y2_n = cov_noise @ Q1_n
+            basis_n, _ = np.linalg.qr(Y2_n)
+            noi_sims[i] = subspace_similarity(basis_n, ref_evecs)
+        except (np.linalg.LinAlgError, ValueError):
+            noi_sims[i] = 0.0
 
         # ── Analytical signal covariance ──────────────────────────────
+        cov_signal = np.zeros((n_ch, n_ch), dtype=np.float64)
         if good_mask.any():
             V_good = evecs[:, good_mask]
             V_good_rows = V_good.T @ ref_cov_reg
             d_good = evals[good_mask][:, None]
             cov_signal = V_good_rows.T @ (V_good_rows * d_good)
             cov_signal = (cov_signal + cov_signal.T) / 2
-            # 2-step QR fast subspace iteration (matches MATLAB SENSAI.m)
-            try:
-                Y1_s = cov_signal @ template
-                Q1_s, _ = np.linalg.qr(Y1_s)
-                Y2_s = cov_signal @ Q1_s
-                basis_s, _ = np.linalg.qr(Y2_s)
-                sig_sims[i] = subspace_similarity(basis_s, ref_evecs)
-            except (np.linalg.LinAlgError, ValueError):
-                sig_sims[i] = 0.0
+        
+        # 2-step QR fast subspace iteration (matches MATLAB SENSAI.m)
+        try:
+            Y1_s = cov_signal @ template
+            Q1_s, _ = np.linalg.qr(Y1_s)
+            Y2_s = cov_signal @ Q1_s
+            basis_s, _ = np.linalg.qr(Y2_s)
+            sig_sims[i] = subspace_similarity(basis_s, ref_evecs)
+        except (np.linalg.LinAlgError, ValueError):
+            sig_sims[i] = 0.0
+
 
     signal_sim = 100.0 * float(np.mean(sig_sims))
     noise_sim = 100.0 * float(np.mean(noi_sims))
@@ -329,6 +334,7 @@ def _find_sensai_threshold(
         epochs = epochs[idx]
 
     all_eval, all_evec = _precompute_gevd(epochs, ref_cov_reg)
+    n_ch = all_eval.shape[1]
 
     def score_at(sensai_t: float) -> tuple[float, float, float]:
         """Return (SENSAI_score, signal_sim, noise_sim) at this threshold."""
@@ -342,32 +348,44 @@ def _find_sensai_threshold(
             evals = np.abs(all_eval[i])
             bad_mask = evals >= et
             good_mask = ~bad_mask
+            cov_n = np.zeros((n_ch, n_ch), dtype=np.float64)
             if bad_mask.any():
                 V_bad = evecs[:, bad_mask]
                 V_bad_rows = V_bad.T @ ref_cov_reg
                 d_bad = evals[bad_mask][:, None]
                 cov_n = V_bad_rows.T @ (V_bad_rows * d_bad)
                 cov_n = (cov_n + cov_n.T) / 2
-                # 2-step QR fast subspace iteration (matches MATLAB SENSAI.m latest)
+            
+            # 2-step QR fast subspace iteration (matches MATLAB SENSAI.m latest)
+            try:
                 template = ref_evecs[:, :n_pc]
                 Y1_n = cov_n @ template
                 Q1_n, _ = np.linalg.qr(Y1_n)
                 Y2_n = cov_n @ Q1_n
                 basis_n, _ = np.linalg.qr(Y2_n)
                 noi_sims[i] = subspace_similarity(basis_n, ref_evecs)
+            except (np.linalg.LinAlgError, ValueError):
+                noi_sims[i] = 0.0
+
+            cov_s = np.zeros((n_ch, n_ch), dtype=np.float64)
             if good_mask.any():
                 V_good = evecs[:, good_mask]
                 V_good_rows = V_good.T @ ref_cov_reg
                 d_good = evals[good_mask][:, None]
                 cov_s = V_good_rows.T @ (V_good_rows * d_good)
                 cov_s = (cov_s + cov_s.T) / 2
-                # 2-step QR fast subspace iteration (matches MATLAB SENSAI.m latest)
+            
+            # 2-step QR fast subspace iteration (matches MATLAB SENSAI.m latest)
+            try:
                 template = ref_evecs[:, :n_pc]
                 Y1_s = cov_s @ template
                 Q1_s, _ = np.linalg.qr(Y1_s)
                 Y2_s = cov_s @ Q1_s
                 basis_s, _ = np.linalg.qr(Y2_s)
                 sig_sims[i] = subspace_similarity(basis_s, ref_evecs)
+            except (np.linalg.LinAlgError, ValueError):
+                sig_sims[i] = 0.0
+
         sig = 100.0 * float(np.mean(sig_sims))
         noi = 100.0 * float(np.mean(noi_sims))
         return sig - noise_multiplier * noi, sig, noi

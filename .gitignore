@@ -61,3 +61,6 @@ htmlcov/
 # Logs
 *.log
 log_*.txt
+
+# Scratch folder for debugging and temporary scripts
+scratch/

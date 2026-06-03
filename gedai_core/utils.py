@@ -44,23 +44,21 @@ def cosine_weights(n_samples: int, dtype=np.float32) -> np.ndarray:
 def subspace_similarity(A: np.ndarray, B: np.ndarray) -> float:
     """Product of cosines of principal angles between column spaces.
 
-    Equivalent to prod(diag(S)) where [~,S,~] = svd(A'*B) after QR
-    orthonormalization. Matches both MATLAB subspace_angles.m and
-    the Python gedai sensai.py implementation.
+    Equivalent to prod(diag(S)) where [~,S,~] = svd(A'*B).
+    Matches MATLAB subspace_angles.m exactly.
 
     Parameters
     ----------
     A, B : (n, k) matrices whose columns span the subspaces.
+           Assumed to be already orthonormal (as per GEDAI context).
 
     Returns
     -------
     similarity : float in [0, 1]
     """
-    Q_A, _ = np.linalg.qr(A)
-    Q_B, _ = np.linalg.qr(B)
-    S = np.linalg.svd(Q_A.T @ Q_B, compute_uv=False)
+    S = np.linalg.svd(A.T @ B, compute_uv=False)
     S = np.clip(S, -1.0, 1.0)
-    return float(np.prod(np.cos(np.arccos(S))))
+    return float(np.prod(S))
 
 
 def top_eigenvectors(cov: np.ndarray, n: int) -> np.ndarray:
