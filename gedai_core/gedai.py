@@ -182,7 +182,10 @@ def _sensai_score_cached(
         
         # 2-step QR fast subspace iteration (matches MATLAB SENSAI.m)
         try:
-            Y1_n = cov_noise @ template
+            if np.max(np.abs(cov_noise)) < 1e-12:
+                Y1_n = np.eye(n_ch, n_pc)
+            else:
+                Y1_n = cov_noise @ template
             Q1_n, _ = np.linalg.qr(Y1_n)
             Y2_n = cov_noise @ Q1_n
             basis_n, _ = np.linalg.qr(Y2_n)
@@ -359,7 +362,10 @@ def _find_sensai_threshold(
             # 2-step QR fast subspace iteration (matches MATLAB SENSAI.m latest)
             try:
                 template = ref_evecs[:, :n_pc]
-                Y1_n = cov_n @ template
+                if np.max(np.abs(cov_n)) < 1e-12:
+                    Y1_n = np.eye(n_ch, n_pc)
+                else:
+                    Y1_n = cov_n @ template
                 Q1_n, _ = np.linalg.qr(Y1_n)
                 Y2_n = cov_n @ Q1_n
                 basis_n, _ = np.linalg.qr(Y2_n)
@@ -1064,18 +1070,18 @@ class GEDAICore:
             data_hp = data_avref
 
         if self.broadband_pass:
-            logger.info("Pass 1: broadband GED pre-cleaning (auto-, epoch=2s) …")
-            broadband_noise_mult = self._parse_noise_multiplier("auto-")  # milder
-            broadband_epoch_size = ensure_even_epoch_samples(2.0, sfreq)
+            logger.info(f"Pass 1: broadband GED pre-cleaning ({self.artifact_threshold_type}, epoch=1s) …")
+            broadband_noise_mult = self._noise_multiplier
+            broadband_epoch_size = ensure_even_epoch_samples(1.0, sfreq)
             try:
                 # D8 fix: use float64 for broadband (MATLAB uses double throughout)
                 cleaned_bb, _noise_bb, _bb_res = _gedai_per_band(
                     data_hp.astype(np.float64),
                     sfreq, ref_cov_reg, ref_evecs,
-                    artifact_threshold_type="auto-",
+                    artifact_threshold_type=self.artifact_threshold_type,
                     epoch_size=broadband_epoch_size,
                     noise_multiplier=broadband_noise_mult,
-                    sensai_min=-2.0,
+                    sensai_min=-4.0,
                     sensai_max=12.0,
                     smoothing_window_sec=self.smoothing_window_sec,
                     n_pc=n_pc,
