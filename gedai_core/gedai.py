@@ -931,6 +931,7 @@ class GEDAICore:
         lam: float = 0.05,
         broadband_pass: bool = True,        # Match MATLAB: always run broadband pass first
         output_reference_channel: str | None = None,
+        signal_type: str = "eeg",
     ):
         self.artifact_threshold_type = artifact_threshold_type
         self.epoch_size_in_cycles = epoch_size_in_cycles
@@ -941,6 +942,8 @@ class GEDAICore:
         self.lam = lam
         self.broadband_pass = broadband_pass
         self.output_reference_channel = output_reference_channel
+        assert signal_type.lower() in ("eeg", "meg"), "signal_type must be 'eeg' or 'meg'"
+        self.signal_type = signal_type.lower()
 
         self._noise_multiplier = self._parse_noise_multiplier(artifact_threshold_type)
 
@@ -997,16 +1000,20 @@ class GEDAICore:
         ref_cov_reg = regularize_cov(ref_cov, self.lam)
         ref_cov_reg = (ref_cov_reg + ref_cov_reg.T) / 2
 
-        # 3. Compute reference subspace dynamically (matches MATLAB GEDAI_per_band.m lines 120-130)
-        evals_ref = np.linalg.eigvalsh(ref_cov_reg)
-        evals_ref = np.sort(evals_ref)[::-1]
-        cumvar_ref = np.cumsum(evals_ref) / np.sum(evals_ref)
-        
-        refCOV_top_PCs = int(np.where(cumvar_ref >= 0.85)[0][0] + 1)
-        refCOV_top_PCs = max(1, min(refCOV_top_PCs, n_ch - 1))
-        
-        n_pc = min(4, refCOV_top_PCs)
+        # 3. Compute reference subspace (matches MATLAB GEDAI_per_band.m lines 116-126 & 421-442)
+        if self.signal_type == "eeg":
+            refCOV_top_PCs = min(3, n_ch)
+            n_pc = refCOV_top_PCs
+        else:  # meg
+            evals_ref = np.linalg.eigvalsh(ref_cov_reg)
+            evals_ref = np.sort(evals_ref)[::-1]
+            cumvar_ref = np.cumsum(evals_ref) / np.sum(evals_ref)
+            refCOV_top_PCs = int(np.where(cumvar_ref >= 0.85)[0][0] + 1)
+            refCOV_top_PCs = max(1, min(refCOV_top_PCs, n_ch - 1))
+            n_pc = min(4, refCOV_top_PCs)
+            
         ref_evecs = top_eigenvectors(ref_cov_reg, refCOV_top_PCs)
+        percentile = 98.0 if self.signal_type == "eeg" else 99.0
 
 
         # 4. SENSAI bounds from threshold type
@@ -1085,6 +1092,7 @@ class GEDAICore:
                     sensai_max=12.0,
                     smoothing_window_sec=self.smoothing_window_sec,
                     n_pc=n_pc,
+                    percentile=percentile,
                 )
                 data_src_for_pass2 = cleaned_bb.astype(np.float64)
                 logger.info(f"  Broadband pass done. SENSAI={_bb_res.sensai_score:.2f}, ENOVA={_bb_res.enova:.3f}")
@@ -1132,6 +1140,7 @@ class GEDAICore:
                 self.artifact_threshold_type, epoch_size_band,
                 self._noise_multiplier, s_min, sensai_max_default,
                 self.smoothing_window_sec, n_pc,
+                percentile=percentile,
             )
             accumulated += c_band.astype(np.float64)
             sensai_per_band.append(res_band.sensai_score)
@@ -1153,7 +1162,7 @@ class GEDAICore:
         # NOT the per-band analytical scores averaged together.
         sensai_score = _sensai_basic(
             clean_final, noise_final, sfreq, ref_cov_reg,
-            epoch_size=1.0, noise_multiplier=1.0, n_pc=3,
+            epoch_size=1.0, noise_multiplier=1.0, n_pc=(3 if self.signal_type == "eeg" else 4),
         )
 
         # Optional output re-reference to a user-specified channel label (matches MATLAB v1.8)
