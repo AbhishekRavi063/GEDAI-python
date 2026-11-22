@@ -168,7 +168,7 @@ def load_dataset27(electrode_type: str, subject_idx: int):
 
 # ── Per-subject plots ────────────────────────────────────────────────────────
 
-def run_and_plot(electrode_type: str, subject_idx: int, tend: float = 60.0):
+def run_and_plot(electrode_type: str, subject_idx: int, tstart: float = 0.0, tend: float = 60.0):
     """Run GEDAI + generate butterfly + SENSAI scatter for one subject."""
     cfg = ELECTRODE_TYPES[electrode_type]
     tag = f"Dataset27_{electrode_type.upper()}_{subject_idx:02d}"
@@ -198,7 +198,7 @@ def run_and_plot(electrode_type: str, subject_idx: int, tend: float = 60.0):
         sfreq=sfreq,
         ch_names=ch_names,
         sensai_score=result.sensai_score,
-        tstart=0.0,
+        tstart=tstart,
         tend=tend,
         out_path=butterfly_path,
         dataset_name=f"Dataset27 {cfg['label']}",
@@ -238,136 +238,95 @@ def run_and_plot(electrode_type: str, subject_idx: int, tend: float = 60.0):
     }
 
 
-# ── Combined 3-type summary figure ──────────────────────────────────────────
+# ── Combined 3-type summary figure ────────────────--------------------------
 
-def make_comparison_figure(results: list[dict]) -> None:
-    """3-column summary: one column per electrode type.
+def make_comparison_figure(results: list[dict], tstart: float = 0.0, tend: float = 30.0) -> None:
+    """3-row summary of trace overlays: one row per electrode type.
 
-    Row 1: Overlay (original red + cleaned blue), 30-second window
-    Row 2: SNR bar + SENSAI + ENOVA summary stats
+    Row 1: Gel overlay (original red + cleaned blue)
+    Row 2: Water overlay (original red + cleaned blue)
+    Row 3: Dry overlay (original red + cleaned blue)
     """
-    fig = plt.figure(figsize=(24, 14), facecolor="white")
+    fig = plt.figure(figsize=(20, 16), facecolor="white")
     fig.suptitle(
         "Dataset 27 — GEDAI Cleaning Comparison: Gel vs Water vs Dry Electrodes",
-        fontsize=14, fontweight="bold", y=0.98,
+        fontsize=15, fontweight="bold", y=0.98,
     )
 
     n_types = len(results)
     gs = gridspec.GridSpec(
-        2, n_types,
+        3, 1,
         figure=fig,
-        hspace=0.35, wspace=0.08,
-        top=0.93, bottom=0.07,
-        left=0.06, right=0.98,
-        height_ratios=[3, 1],
+        hspace=0.22,
+        top=0.93, bottom=0.06,
+        left=0.08, right=0.98,
     )
 
-    WINDOW_S = 30.0
+    labels = ["A — Gel Electrodes", "B — Water-based Electrodes", "C — Dry Electrodes"]
 
-    for col, r in enumerate(results):
+    for row, r in enumerate(results):
         data   = r["data"]
         clean  = r["clean"]
-        noise  = r["noise"]
         sfreq  = r["sfreq"]
         n_ch   = r["n_ch"]
         color  = r["color"]
+        ch_names = r["result"].ch_names if hasattr(r["result"], "ch_names") else [f"Ch{i+1}" for i in range(n_ch)]
+        if not ch_names or len(ch_names) != n_ch:
+            # Fallback
+            ch_names = [f"Ch{i+1}" for i in range(n_ch)]
 
-        n_win  = int(WINDOW_S * sfreq)
-        t_axis = np.arange(n_win) / sfreq
-        orig_w = data[:, :n_win]
-        cln_w  = clean[:, :n_win]
-        noi_w  = noise[:, :n_win]
+        i0 = int(tstart * sfreq)
+        i1 = int(tend * sfreq)
+        
+        t_axis = np.arange(i1 - i0) / sfreq + tstart
+        orig_w = data[:, i0:i1]
+        cln_w  = clean[:, i0:i1]
 
         flat     = orig_w.ravel()
         scale    = float(5.0 * np.median(np.abs(flat - np.median(flat))))
         scale    = np.clip(scale, 5.0, 300.0)
         spacing  = scale * 1.1
 
-        # ── Row 0: Overlay ──────────────────────────────────────────────────
-        ax_ov = fig.add_subplot(gs[0, col])
+        ax_ov = fig.add_subplot(gs[row, 0])
         for ch in range(n_ch):
             offset = (n_ch - 1 - ch) * spacing
             ax_ov.plot(t_axis, orig_w[ch] + offset,
-                       color="#CC1111", lw=0.4, alpha=0.65, rasterized=True)
+                       color="#CC1111", lw=0.6, alpha=0.75, rasterized=True)
             ax_ov.plot(t_axis, cln_w[ch] + offset,
-                       color="#1144CC", lw=0.5, alpha=0.85, rasterized=True)
+                       color="#1144CC", lw=0.6, alpha=0.9, linestyle="--", rasterized=True)
 
-        ax_ov.set_xlim(0, WINDOW_S)
+        ax_ov.set_xlim(tstart, tend)
         ax_ov.set_ylim(-spacing * 0.5, n_ch * spacing)
+        
         ax_ov.set_title(
-            f"{r['label']}\nSubject {r['subject']:02d}  |  {n_ch} ch  |  "
-            f"SENSAI {r['sensai']:.1f}%",
-            fontsize=10, fontweight="bold", color=color, pad=4,
+            f"{labels[row]} (Subject {r['subject']:02d}  |  {n_ch} channels  |  SENSAI Score: {r['sensai']:.1f}%)",
+            fontsize=11, fontweight="bold", color=color, loc="left", pad=4,
         )
-        ax_ov.set_xlabel("Time (s)", fontsize=9)
-        if col == 0:
-            ax_ov.set_ylabel("Channels (offset)", fontsize=9)
-        else:
-            ax_ov.set_yticks([])
 
+        if row == 2:
+            ax_ov.set_xlabel("Time (s)", fontsize=10)
+        else:
+            ax_ov.tick_params(labelbottom=False)
+
+        ax_ov.set_ylabel("Channels (offset)", fontsize=10)
+
+        # Space out y-ticks for readability
         step = max(1, n_ch // 8)
         y_ticks  = [(n_ch - 1 - ch) * spacing for ch in range(0, n_ch, step)]
-        y_labels = [r["result"].sensai_score] * len(y_ticks)  # placeholder
+        y_labels = [ch_names[ch] for ch in range(0, n_ch, step)]
+        ax_ov.set_yticks(y_ticks)
+        ax_ov.set_yticklabels(y_labels, fontsize=7.5)
         ax_ov.spines[["top", "right"]].set_visible(False)
 
-        # Legend only on first column
-        if col == 0:
+        # Legend only on first row
+        if row == 0:
             from matplotlib.lines import Line2D
             ax_ov.legend(
                 [Line2D([0], [0], color="#CC1111", lw=1.5),
                  Line2D([0], [0], color="#1144CC", lw=1.5)],
                 ["Original (raw)", "GEDAI cleaned"],
-                fontsize=8, loc="upper right",
+                fontsize=9, loc="upper right",
             )
-
-        # ── Row 1: Stats bar ────────────────────────────────────────────────
-        ax_st = fig.add_subplot(gs[1, col])
-        ax_st.set_facecolor("#F8F9FA")
-
-        # Compute SNR improvement
-        sig_var   = float(np.var(cln_w))
-        noise_var = float(np.var(noi_w))
-        snr_db    = 10 * np.log10(sig_var / (noise_var + 1e-12))
-
-        # Compute mean ENOVA
-        mean_enova_pct = r["mean_enova"] * 100
-
-        # Bar chart: 3 bars per subject
-        metrics = {
-            "SENSAI\n(%)":        r["sensai"],
-            "Mean ENOVA\n(×100)": mean_enova_pct,
-            "SNR\nimprovement\n(dB)": max(snr_db, 0),
-        }
-        bars = ax_st.bar(
-            range(len(metrics)),
-            [v for v in metrics.values()],
-            color=[color] * len(metrics),
-            edgecolor="white", linewidth=1.2,
-            width=0.55,
-        )
-        ax_st.set_xticks(range(len(metrics)))
-        ax_st.set_xticklabels(list(metrics.keys()), fontsize=8)
-        ax_st.set_ylim(0, max(max(metrics.values()) * 1.3, 10))
-        ax_st.spines[["top", "right"]].set_visible(False)
-        if col == 0:
-            ax_st.set_ylabel("Value", fontsize=8)
-
-        for bar, val in zip(bars, metrics.values()):
-            ax_st.text(
-                bar.get_x() + bar.get_width() / 2,
-                bar.get_height() + 0.5,
-                f"{val:.1f}",
-                ha="center", va="bottom", fontsize=8, fontweight="bold",
-            )
-
-        # Trial info below
-        ax_st.text(
-            0.5, -0.35,
-            f"Palmar: {r['n_palmar']}  |  Lateral: {r['n_lateral']}  |  "
-            f"Duration: {r['duration_s']:.0f}s",
-            transform=ax_st.transAxes,
-            ha="center", va="top", fontsize=7.5, color="#555",
-        )
 
     out_path = FIGURES_DIR / "dataset27_electrode_comparison.png"
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
@@ -385,8 +344,10 @@ def main():
                         help="Water subject index (6-15 available, default 6 = V06)")
     parser.add_argument("--dry",   type=int, default=1,
                         help="Dry subject index (1-15, default 1 = H01)")
-    parser.add_argument("--tend",  type=float, default=60.0,
-                        help="Window length in seconds for butterfly plots (default 60)")
+    parser.add_argument("--tstart", type=float, default=15.0,
+                        help="Start time in seconds for butterfly plots (default 15.0)")
+    parser.add_argument("--tend",  type=float, default=25.0,
+                        help="End time in seconds for butterfly plots (default 25.0)")
     args = parser.parse_args()
 
     logger.info("=" * 65)
@@ -397,22 +358,22 @@ def main():
 
     # Gel
     logger.info(f"\n{'─'*40}\n GEL — G{args.gel:02d}\n{'─'*40}")
-    r_gel = run_and_plot("gel", args.gel, tend=args.tend)
+    r_gel = run_and_plot("gel", args.gel, tstart=args.tstart, tend=args.tend)
     results.append(r_gel)
 
     # Water
     logger.info(f"\n{'─'*40}\n WATER — V{args.water:02d}\n{'─'*40}")
-    r_water = run_and_plot("water", args.water, tend=args.tend)
+    r_water = run_and_plot("water", args.water, tstart=args.tstart, tend=args.tend)
     results.append(r_water)
 
     # Dry
     logger.info(f"\n{'─'*40}\n DRY — H{args.dry:02d}\n{'─'*40}")
-    r_dry = run_and_plot("dry", args.dry, tend=args.tend)
+    r_dry = run_and_plot("dry", args.dry, tstart=args.tstart, tend=args.tend)
     results.append(r_dry)
 
     # Combined comparison figure
     logger.info("\nGenerating 3-type comparison figure …")
-    make_comparison_figure(results)
+    make_comparison_figure(results, tstart=args.tstart, tend=args.tend)
 
     # Print summary
     print("\n" + "=" * 65)

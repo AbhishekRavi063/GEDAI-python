@@ -11,7 +11,7 @@ Where:
     P = classification accuracy (0..1)
     N = number of target classes
 
-Effective ITR accounting for rejection rate R (Gemini/Ros formulation):
+Effective ITR accounting for rejection rate R (Wolpaw formulation with trial rejection):
     ITR_effective_per_trial = B(P) × (1 - R)
     ITR_effective_per_min   = ITR_effective_per_trial × (60 / trial_duration_sec)
 
@@ -97,8 +97,8 @@ def itr_bits_per_minute(
 # ---------------------------------------------------------------------------
 # IMPORTANT: This is a MATHEMATICAL MODEL applied to motor imagery data,
 # NOT a measurement from an actual P300/SSVEP speller experiment. The cost
-# structure (error=2 actions, skip=1 action) follows the framework proposed
-# by Gemini/Ros for speller-style BCIs. Real validation requires running
+# structure (error=2 actions, skip=1 action) follows the standard framework
+# for speller-style BCIs. Real validation requires running
 # this analysis on actual P300 speller datasets (future work).
 # ---------------------------------------------------------------------------
 

@@ -71,8 +71,9 @@ def _annotate_default(ax, thresholds, y_top: float) -> None:
     if DEFAULT_THRESH in thresholds:
         idx = list(thresholds).index(DEFAULT_THRESH)
         ax.axvline(idx, color="#F44336", linestyle=":", linewidth=1.5, alpha=0.7)
-        ax.text(idx + 0.05, y_top, "MATLAB\ndefault", color="#F44336",
-                fontsize=8, va="top")
+        ax.text(idx - 0.2, y_top, "MATLAB\ndefault", color="#F44336",
+                fontsize=9, va="bottom", ha="right",
+                bbox=dict(facecolor="white", alpha=0.8, edgecolor="none", pad=1.0))
 
 
 # ── Figure 1: BA per threshold ───────────────────────────────────────────────
@@ -110,10 +111,10 @@ def fig1_ba_per_threshold(df: pd.DataFrame) -> None:
     _annotate_default(ax, thresholds, max(means) + 0.02)
 
     ax.set_xticks(x)
-    ax.set_xticklabels([f"{t:.2f}" for t in thresholds])
+    ax.set_xticklabels([f"{t:.2f}" for t in thresholds], rotation=45)
     ax.set_xlabel("ENOVA Threshold")
     ax.set_ylabel("Balanced Accuracy")
-    ax.set_title("Fig 1 — BCI Decoding BA vs ENOVA Threshold\n"
+    ax.set_title("BCI Decoding BA vs ENOVA Threshold\n"
                  "(Reject+Keep strategy, mean ± SEM, N=9 subjects)")
     ax.set_ylim(0.45, min(1.0, max(means) + 0.12))
     ax.legend(loc="upper right")
@@ -151,7 +152,7 @@ def fig2_reconstruct_vs_reject(df: pd.DataFrame) -> None:
            capsize=4, alpha=0.85)
     ax.axhline(0.5, color="gray", linestyle="--", linewidth=1, alpha=0.5)
     ax.set_xticks(x)
-    ax.set_xticklabels([f"{t:.2f}" for t in thresholds])
+    ax.set_xticklabels([f"{t:.2f}" for t in thresholds], rotation=45)
     ax.set_xlabel("ENOVA Threshold")
     ax.set_ylabel("Balanced Accuracy")
     ax.set_title("Reconstruct-all vs Reject+Keep")
@@ -209,7 +210,7 @@ def fig3_heatmap(df: pd.DataFrame) -> None:
     plt.colorbar(im, ax=ax, label="Balanced Accuracy")
 
     ax.set_xticks(range(len(thresholds)))
-    ax.set_xticklabels([f"{t:.2f}" for t in thresholds])
+    ax.set_xticklabels([f"{t:.2f}" for t in thresholds], rotation=45)
     ax.set_yticks(range(len(subjects)))
     ax.set_yticklabels(subjects, fontsize=7)
     ax.set_xlabel("ENOVA Threshold")
@@ -265,7 +266,7 @@ def fig4_precision_recall(df: pd.DataFrame) -> None:
                 color="#F44336", linewidth=2, capsize=4)
     _annotate_default(ax, thresholds, 1.0)
     ax.set_xticks(x)
-    ax.set_xticklabels([f"{t:.2f}" for t in thresholds])
+    ax.set_xticklabels([f"{t:.2f}" for t in thresholds], rotation=45)
     ax.set_xlabel("ENOVA Threshold")
     ax.set_ylabel("Rate")
     ax.set_ylim(-0.05, 1.15)
@@ -362,7 +363,7 @@ def fig6_neural_preservation(df: pd.DataFrame) -> None:
                     color="#FF5722", linewidth=2, capsize=4)
     _annotate_default(ax, thresholds, 1.0)
     ax.set_xticks(x)
-    ax.set_xticklabels([f"{t:.2f}" for t in thresholds])
+    ax.set_xticklabels([f"{t:.2f}" for t in thresholds], rotation=45)
     ax.set_xlabel("ENOVA Threshold")
     ax.set_ylabel("Pearson Correlation with Clean Reference")
     ax.set_ylim(0.0, 1.15)
@@ -380,7 +381,7 @@ def fig6_neural_preservation(df: pd.DataFrame) -> None:
         for patch, t in zip(bp["boxes"], thresholds):
             patch.set_facecolor(COLORS.get(t, "#9E9E9E"))
             patch.set_alpha(0.7)
-        ax2.set_xticklabels([f"{t:.2f}" for t in thresholds])
+        ax2.set_xticklabels([f"{t:.2f}" for t in thresholds], rotation=45)
         ax2.set_xlabel("ENOVA Threshold")
         ax2.set_ylabel("Mu-band Correlation")
         ax2.set_title("Mu-band Correlation Distribution\nper Subject (boxplot)")
@@ -456,8 +457,8 @@ def fig8_summary(df: pd.DataFrame) -> None:
                                    index="subject", columns="enova_threshold")
         subjects = [f"S{s}" for s in ba_pivot.index]
 
-    fig = plt.figure(figsize=(16, 10))
-    gs  = GridSpec(2, 3, figure=fig, hspace=0.42, wspace=0.38)
+    fig = plt.figure(figsize=(16, 10.5))
+    gs  = GridSpec(2, 3, figure=fig, hspace=0.48, wspace=0.45)
 
     ax1 = fig.add_subplot(gs[0, 0])   # BA bar chart
     ax2 = fig.add_subplot(gs[0, 1])   # Precision / Recall
@@ -484,7 +485,7 @@ def fig8_summary(df: pd.DataFrame) -> None:
              alpha=0.6, label="Reconstruct-all")
     ax1.axhline(0.5, color="gray", linestyle=":", linewidth=1, alpha=0.5)
     _annotate_default(ax1, thresholds, max(means) + 0.01)
-    ax1.set_xticks(x); ax1.set_xticklabels([f"{t:.2f}" for t in thresholds])
+    ax1.set_xticks(x); ax1.set_xticklabels([f"{t:.2f}" for t in thresholds], rotation=45)
     ax1.set_xlabel("ENOVA Threshold"); ax1.set_ylabel("Balanced Accuracy")
     ax1.set_title("(A) BCI Decoding BA")
     ax1.set_ylim(0.45, max(means) + 0.12)
@@ -498,7 +499,7 @@ def fig8_summary(df: pd.DataFrame) -> None:
     ax2.plot(x, rec,  "s-", color="#4CAF50", linewidth=2, label="Recall")
     ax2.plot(x, frr,  "^-", color="#F44336", linewidth=2, label="FRR")
     _annotate_default(ax2, thresholds, 1.0)
-    ax2.set_xticks(x); ax2.set_xticklabels([f"{t:.2f}" for t in thresholds])
+    ax2.set_xticks(x); ax2.set_xticklabels([f"{t:.2f}" for t in thresholds], rotation=45)
     ax2.set_xlabel("ENOVA Threshold"); ax2.set_ylabel("Rate")
     ax2.set_ylim(-0.05, 1.15); ax2.set_title("(B) Rejection Quality")
     ax2.legend(fontsize=8)
@@ -521,7 +522,7 @@ def fig8_summary(df: pd.DataFrame) -> None:
                     vmin=0.45, vmax=0.80)
     plt.colorbar(im, ax=ax4, label="BA")
     ax4.set_xticks(range(len(thresholds)))
-    ax4.set_xticklabels([f"{t:.2f}" for t in thresholds])
+    ax4.set_xticklabels([f"{t:.2f}" for t in thresholds], rotation=45)
     # Subject labels: skip every other one if too many for readability
     yticks = list(range(len(subjects)))
     ylabels = subjects
@@ -558,9 +559,9 @@ def fig8_summary(df: pd.DataFrame) -> None:
                 for t in thresholds]
         ax5.errorbar(x, bt_m, yerr=bt_e, marker="s", color="#FF5722",
                      linewidth=2, capsize=4, label="Beta (13–30 Hz)")
-    ax5.set_xticks(x); ax5.set_xticklabels([f"{t:.2f}" for t in thresholds])
+    ax5.set_xticks(x); ax5.set_xticklabels([f"{t:.2f}" for t in thresholds], rotation=45)
     ax5.set_xlabel("ENOVA Threshold")
-    ax5.set_ylabel("Correlation with Clean Reference")
+    ax5.set_ylabel("Correlation with\nClean Reference")
     ax5.set_title("(E) Neural Signal Preservation")
     ax5.set_ylim(0, 1.15)
     ax5.axhline(1.0, color="gray", linestyle="--", linewidth=1, alpha=0.4)
@@ -578,11 +579,14 @@ def fig8_summary(df: pd.DataFrame) -> None:
     hi = max(df["ba_reconstruct"].max(), df["ba_reject_keep"].max()) + 0.02
     ax6.plot([lo, hi], [lo, hi], "k--", linewidth=1, alpha=0.5)
     ax6.set_xlabel("BA (Reconstruct-all)")
-    ax6.set_ylabel("BA (Reject+Keep)")
+    ax6.set_ylabel("Balanced Accuracy\n(Reject+Keep)")
     ax6.set_title("(F) Reconstruct vs Reject+Keep\n(above diagonal = rejection helps)")
     ax6.set_xlim(lo, hi); ax6.set_ylim(lo, hi)
     ax6.set_aspect("equal")
     ax6.legend(fontsize=8, title="Threshold")
+
+    # Call tight_layout to dynamically prevent overlapping labels/ticks
+    fig.tight_layout(rect=[0, 0, 1, 0.92])
 
     fig.suptitle(
         "GEDAI ENOVA Threshold Benchmark — Summary\n"
@@ -864,7 +868,7 @@ def fig11_gedai_vs_asr(df: pd.DataFrame) -> None:
                     xytext=(0,-15), ha="center", fontsize=7.5, color="#D32F2F")
 
     ax.set_xticks(x)
-    ax.set_xticklabels([f"{t:.2f}" for t in thresholds])
+    ax.set_xticklabels([f"{t:.2f}" for t in thresholds], rotation=45)
     ax.set_xlabel("Rejection Strictness (ENOVA Threshold / Mapped ASR Cutoff k)")
     ax.set_ylabel("Effective ITR (bits / trial)")
     ax.set_title("Fig 11 — BCI Speed Benchmark: GEDAI vs. ASR\n(Reject+Keep strategy, mean ± SEM, across all subjects)")
@@ -891,7 +895,11 @@ def main():
         sys.exit(1)
 
     df = pd.read_csv(args.csv)
-    print(f"Loaded {len(df)} rows from {args.csv}")
+    # Filter to only the main benchmark dataset (BNCI2014_001) as intended for preprint figures
+    if "dataset" in df.columns:
+        df = df[df["dataset"] == "BNCI2014_001"]
+        
+    print(f"Loaded {len(df)} rows from {args.csv} for BNCI2014_001")
     print(f"Subjects: {sorted(df['subject'].unique())}")
     print(f"Thresholds: {sorted(df['enova_threshold'].unique())}")
     print(f"\nGenerating figures → {FIGURES_DIR}/")

@@ -1,3 +1,4 @@
+import os
 """experiments/sweep_dataset27_simulation.py
 
 Channel Rejection Simulation on Dataset 27 (Water - 32ch) as requested by the user.
@@ -36,7 +37,7 @@ RESULTS_DIR.mkdir(exist_ok=True)
 PLOT_DIR.mkdir(exist_ok=True)
 
 # App Data Artifacts directory
-ARTIFACTS_DIR = Path("/Users/abhishekr/.gemini/antigravity/brain/bf94f6e8-ceee-4b39-8a40-fb1214654271")
+ARTIFACTS_DIR = Path(os.environ.get("ARTIFACTS_DIR", "")) if os.environ.get("ARTIFACTS_DIR") else None
 
 N_BAD_SWEEP = [0, 1, 2, 3, 4, 5, 6, 8, 10]
 NOISE_STD_UV = 80.0  # high amplitude contact noise (80 µV)
@@ -314,7 +315,7 @@ def plot_results(df: pd.DataFrame):
     logger.info(f"Saved figure → {plot_path}")
 
     # Copy to Artifacts directory so it renders in the chat UI
-    if ARTIFACTS_DIR.exists():
+    if ARTIFACTS_DIR and ARTIFACTS_DIR.exists():
         art_path = ARTIFACTS_DIR / "fig14_dataset27_water_simulated_noise.png"
         plt.savefig(art_path, bbox_inches="tight")
         logger.info(f"Saved figure to Artifacts directory → {art_path}")

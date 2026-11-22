@@ -1,3 +1,4 @@
+import os
 """experiments/sweep_p300_noise.py
 
 Same simulation as sweep_simulated_noise.py (Figures 12/13) but on
@@ -35,7 +36,7 @@ PLOTS_DIR   = Path(__file__).parent.parent / "plots"
 RESULTS_DIR.mkdir(exist_ok=True)
 PLOTS_DIR.mkdir(exist_ok=True)
 
-ARTIFACTS_DIR = Path("/Users/abhishekr/.gemini/antigravity/brain/fa98b9a0-b41b-468d-8c1c-652fcfb9ee69")
+ARTIFACTS_DIR = Path(os.environ.get("ARTIFACTS_DIR", "")) if os.environ.get("ARTIFACTS_DIR") else None
 
 DATASET_NAME = "BI2013a"
 N_BAD_SWEEP  = [0, 1, 2, 4, 8, 16]

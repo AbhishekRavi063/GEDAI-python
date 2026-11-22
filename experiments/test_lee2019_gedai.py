@@ -1,3 +1,4 @@
+import os
 """experiments/test_lee2019_gedai.py
 
 Compare 3 cleaning modes for Lee2019_ERP (62-channel P300 speller):
@@ -19,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [%(name)s] %(message)s", datefmt="%H:%M:%S")
 logger = logging.getLogger(__name__)
 
-ARTIFACTS_DIR = Path("/Users/abhishekr/.gemini/antigravity/brain/fa98b9a0-b41b-468d-8c1c-652fcfb9ee69")
+ARTIFACTS_DIR = Path(os.environ.get("ARTIFACTS_DIR", "")) if os.environ.get("ARTIFACTS_DIR") else None
 SUBJECT = 1
 N_CLASSES = 36
 TRIAL_DUR = 3.0

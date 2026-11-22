@@ -67,6 +67,19 @@ def load_subject_continuous(dataset_name: str, subject_id: int):
     logger.info(f"Loading {dataset_name} subject {subject_id} …")
 
     # P300 datasets — use MOABB P300 paradigm directly
+    if dataset_name == "INRIA":
+        from datasets.load_inria_bci import load_inria_session
+        sig, sfreq, labels, samples, ch_names = load_inria_session(f"S{subject_id:02d}", 1)
+        # Construct a dummy mne info
+        import mne
+        mne_info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types="eeg")
+        # Standard montage for topoplot
+        try:
+            mne_info.set_montage("standard_1005")
+        except:
+            pass
+        return sig, float(sfreq), ch_names, mne_info
+
     if dataset_name in ("BNCI2014_008", "RomaniBF2025ERP", "BI2013a", "Lee2019_ERP"):
         import moabb.datasets as _mds
         from moabb.paradigms import P300
@@ -540,8 +553,7 @@ def make_sensai_scatter(
 
     # Hide ticks and spines of all marginal axes to keep them clean
     for ax_m in [ax1_x, ax1_y, ax2_x, ax2_y]:
-        ax_m.set_xticks([])
-        ax_m.set_yticks([])
+        ax_m.tick_params(bottom=False, left=False, labelbottom=False, labelleft=False)
         for spine in ax_m.spines.values():
             spine.set_visible(False)
         ax_m.patch.set_alpha(0.0)
@@ -580,12 +592,14 @@ def make_sensai_scatter(
     )
     ax2_x.set_title(after_title, fontsize=11, pad=10)
 
-    # ── Plot Panel 1 Main Scatter ──
+    # ── PANEL 1: Before Denoising ──
     # Sort for overlay rendering order
     si = np.argsort(before_ssi)
     sc = ax1_main.scatter(orig_power[si], before_ssi[si], c=before_ssi[si], cmap="viridis",
                           vmin=0, vmax=1, alpha=0.75, s=38, edgecolors="none", zorder=3)
-    ax1_main.axhline(1.0, color=col_star, linestyle="--", linewidth=1.5, alpha=0.6, zorder=2)
+    
+    # Draw horizontal line at 0.9 (Leadfield reference line matching MATLAB)
+    ax1_main.axhline(0.9, color=col_star, linestyle="--", linewidth=1.5, alpha=0.8, zorder=2)
 
     # Add colorbar on the right of Panel 1
     from mpl_toolkits.axes_grid1.inset_locator import inset_axes
@@ -596,13 +610,16 @@ def make_sensai_scatter(
     cbar.set_label("SSI (Subspace Similarity Index) relative to Leadfield", fontsize=9)
 
     # ── Plot Panel 2 LDA Shading ──
+    # Flag noise epochs by comparing noise component power to clean signal power
+    is_noise = noise_power >= (np.median(clean_power) - 5.0)
+    
     try:
         from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
         X_lda = np.column_stack((
-            np.concatenate((sig_ssi, noi_ssi)),
-            np.concatenate((clean_power, noise_power))
+            np.concatenate((sig_ssi, noi_ssi[is_noise])),
+            np.concatenate((clean_power, noise_power[is_noise]))
         ))
-        # Y_lda already defined
+        Y_lda = np.concatenate((np.ones(len(sig_ssi)), np.zeros(np.sum(is_noise))))
         lda = LinearDiscriminantAnalysis()
         lda.fit(X_lda, Y_lda)
 
@@ -625,21 +642,32 @@ def make_sensai_scatter(
         logger.error(f"Failed to fit/plot LDA: {e}")
 
     # ── Plot Panel 2 Main Scatter ──
-    h_noise = ax2_main.scatter(noise_power, noi_ssi, s=38, c=col_noise, alpha=0.40,
-                               edgecolors='none', zorder=3, label=f"Noise (mean SSI={noi_ssi.mean():.2f})")
-    h_sig = ax2_main.scatter(clean_power, sig_ssi, s=38, c=col_sig, alpha=0.40,
-                             edgecolors='none', zorder=3, label=f"Signal (mean SSI={sig_ssi.mean():.2f})")
+    # Plot clean signal components for ALL epochs in green
+    h_sig = ax2_main.scatter(clean_power, sig_ssi, s=38, c=col_sig, alpha=0.5,
+                             edgecolors='none', zorder=3, label=f"Cleaned Signal (mean SSI={sig_ssi.mean():.2f})")
+    
+    # Plot extracted noise components ONLY for flagged epochs in red
+    if np.sum(is_noise) > 0:
+        h_noise = ax2_main.scatter(noise_power[is_noise], noi_ssi[is_noise], s=38, c=col_noise, alpha=0.5,
+                                   edgecolors='none', zorder=3, label=f"Extracted Noise (mean SSI={noi_ssi[is_noise].mean():.2f})")
+    else:
+        h_noise = None
 
-    ax2_main.axhline(1.0, color=col_star, linestyle="--", linewidth=1.5, alpha=0.6, zorder=2)
+    ax2_main.axhline(0.9, color=col_star, linestyle="--", linewidth=1.5, alpha=0.8, zorder=2)
     h_star = ax2_main.scatter(ideal_power_target, 1.0, s=250, marker='*', facecolor=col_star,
                               edgecolors='k', zorder=5, label='Leadfield Subspace')
 
     # Legend for Panel 2
     label_sig = f"Signal (mean SSI={sig_ssi.mean():.2f})"
-    label_noi = f"Noise (mean SSI={noi_ssi.mean():.2f})"
+    label_noi = f"Noise (mean SSI={noi_ssi[is_noise].mean():.2f})" if np.sum(is_noise) > 0 else "No Noise Extracted"
+    handles = [h_star, h_sig]
+    texts = ['Leadfield Subspace', label_sig]
+    if h_noise is not None:
+        handles.append(h_noise)
+        texts.append(label_noi)
+        
     leg = ax2_main.legend(
-        [h_star, h_sig, h_noise],
-        ['Leadfield Subspace', label_sig, label_noi],
+        handles, texts,
         fontsize=9, loc="upper right", bbox_to_anchor=(0.99, 0.99),
         borderaxespad=0, framealpha=0.9
     )
@@ -657,14 +685,9 @@ def make_sensai_scatter(
     for ax in [ax1_main, ax2_main]:
         ax.set_xlabel("Epoch Power (dB)", fontsize=11)
         ax.spines[['top', 'right']].set_visible(False)
-        ax.tick_params(axis='both', which='both', direction='inout', labelsize=9)
+        ax.tick_params(axis='both', which='both', direction='inout', labelsize=9, labelbottom=True, labelleft=True)
 
     ax1_main.set_ylabel("SSI (geom. mean of top-3 PC cosines)", fontsize=11)
-    ax2_main.set_ylabel("SSI (geom. mean of top-3 PC cosines)", fontsize=11)
-
-    # ── PANEL 2: Marginal Densities ──
-    x_grid = np.linspace(x_lims[0], x_lims[1], 200)
-    y_grid = np.linspace(-0.05, 1.15, 200)
 
     # Top marginal
     try:
@@ -705,8 +728,9 @@ def main():
     parser = argparse.ArgumentParser(
         description="Generate MATLAB vis_artifacts-equivalent validation plots"
     )
-    parser.add_argument("--dataset",  default="Weibo2014",
-                        choices=["Weibo2014", "BNCI2014_001", "Zhou2016", "Shin2017A", "BNCI2014_008", "RomaniBF2025ERP", "BI2013a", "Lee2019_ERP"])
+    parser.add_argument("--dataset", type=str, default="Weibo2014",
+                        choices=["Weibo2014", "BNCI2014_001", "Zhou2016", "Shin2017A",
+                                 "BNCI2014_008", "RomaniBF2025ERP", "BI2013a", "Lee2019_ERP", "INRIA"])
     parser.add_argument("--subject",  type=int, default=1)
     parser.add_argument("--tstart",   type=float, default=0.0,
                         help="Start time (s) for butterfly display window")

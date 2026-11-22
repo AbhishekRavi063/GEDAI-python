@@ -22,12 +22,20 @@ env/
 results/
 plots/
 
-# Ignore all markdown plans, walkthroughs, and notes
+# Documentation & notes
 *.md
 !README.md
+!MATLAB_PORT_AUDIT.md
 
-# EEG data (downloaded by MOABB automatically)
+# EEG raw data & downloaded caches (MOABB, MNE)
 ~/mne_data/
+.mne/
+mne_data/
+moabb_data/
+data/
+datasets/dataset27/
+datasets/BCIN/
+datasets/inria_bci_challenge/
 *.fif
 *.edf
 *.bdf
@@ -35,19 +43,36 @@ plots/
 *.npy
 *.h5
 *.hdf5
+*.mat
+*.set
 
-# Dataset 27 — gel/water/dry .mat files (too large for git, ~6.8 GB)
-datasets/dataset27/
+# Office, presentation, and manuscript binary files
+*.docx
+*.pptx
+*.pdf
+*.zip
+*.tar.gz
 
-# MOABB cache
-moabb_data/
+# Media and temporary image artifacts
+whatsapp_images/
+extracted_images/
+*.png
+*.jpg
+*.jpeg
+
+# LaTeX build outputs, manuscript builders & temporary scripts
+latex_preprint/
+plot_simple.py
+scripts/convert_to_latex.py
+scripts/create_docx.py
+scripts/revamp_manuscript_docx.py
 
 # macOS
 .DS_Store
 .AppleDouble
 .LSOverride
 
-# pytest
+# pytest & coverage
 .pytest_cache/
 .coverage
 htmlcov/

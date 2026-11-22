@@ -1,3 +1,4 @@
+import os
 """experiments/visualize_p300_enova.py
 
 Generates the correct visualizations for P300 ENOVA-only mode:
@@ -20,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [%(name)s] %(message)s", datefmt="%H:%M:%S")
 logger = logging.getLogger(__name__)
 
-ARTIFACTS_DIR = Path("/Users/abhishekr/.gemini/antigravity/brain/fa98b9a0-b41b-468d-8c1c-652fcfb9ee69")
+ARTIFACTS_DIR = Path(os.environ.get("ARTIFACTS_DIR", "")) if os.environ.get("ARTIFACTS_DIR") else None
 RESULTS_DIR   = Path(__file__).parent.parent / "results" / "figures"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 

@@ -1,3 +1,4 @@
+import os
 """experiments/sweep_p300_threshold.py
 
 Full ENOVA threshold sweep for BNCI2014_008 (P300 speller).
@@ -36,7 +37,7 @@ PLOTS_DIR   = Path(__file__).parent.parent / "plots"
 RESULTS_DIR.mkdir(exist_ok=True)
 PLOTS_DIR.mkdir(exist_ok=True)
 
-ARTIFACTS_DIR = Path("/Users/abhishekr/.gemini/antigravity/brain/fa98b9a0-b41b-468d-8c1c-652fcfb9ee69")
+ARTIFACTS_DIR = Path(os.environ.get("ARTIFACTS_DIR", "")) if os.environ.get("ARTIFACTS_DIR") else None
 
 # Same thresholds as the MI sweep
 THRESHOLDS = [0.50, 0.60, 0.70, 0.80, 0.85, 0.90, 0.95, 1.00]

@@ -76,6 +76,11 @@ def _ged_clean_epoch(
     eigvecs_filtered = eigenvectors.copy()
 
     signal_mask = np.abs(eigenvalues) < eigenvalue_threshold
+    
+    # Fallback to prevent complete signal collapse (flat line) on extremely noisy low-density data
+    if not np.any(signal_mask) and len(eigenvalues) > 0:
+        signal_mask[np.argmin(np.abs(eigenvalues))] = True
+
     eigvecs_filtered[:, signal_mask] = 0
 
     # New artifact reconstruction formula (matches MATLAB clean_EEG.m latest):
@@ -111,17 +116,25 @@ def _precompute_gevd(
     return all_eval, all_evec
 
 
-def _sensai_to_eigenvalue(sensai_t: float, all_eigenvalues: np.ndarray, percentile: float = 98.0) -> float:
-    """Convert SENSAI threshold (0–12 scale) to eigenvalue threshold.
+def _sensai_to_eigenvalue(sensai_t: float, all_eval: np.ndarray, percentile: float) -> float:
+    """Map a SENSAI threshold (sensai_t) to an absolute eigenvalue threshold.
 
-    Matches MATLAB clean_EEG.m T1/Treshold1 calculation.
+    Matches MATLAB clean_EEG.m logic exactly!
     """
-    flat = np.abs(all_eigenvalues.ravel())
-    log_evals = np.log(flat[flat > 0]) + 100.0
-    T1 = (105.0 - sensai_t) / 100.0
-    global_prctile = float(np.percentile(log_evals, percentile))
-    thresh_log = T1 * global_prctile
-    return float(np.exp(thresh_log - 100.0))
+    from numpy import percentile as np_percentile
+
+    magnitudes = np.abs(all_eval.flatten())
+    magnitudes = magnitudes[magnitudes > 1e-12]
+    if len(magnitudes) == 0:
+        return 1e9
+
+    log_eig_val_all = np.log(magnitudes) + 100.0
+    global_log_prctile = np_percentile(log_eig_val_all, percentile)
+
+    t1 = 1.0 * (105.0 - sensai_t) / 100.0
+    threshold1 = t1 * global_log_prctile
+
+    return float(np.exp(threshold1 - 100.0))
 
 
 def _sensai_score_cached(
@@ -317,7 +330,7 @@ def _find_sensai_threshold(
     sensai_max: float,
     n_pc: int = 3,
     percentile: float = 98.0,
-    use_grid_safeguard: bool = False,
+    use_grid_safeguard: bool = True,
 ) -> float:
     """SENSAI-optimal eigenvalue threshold for a set of epochs.
 
@@ -1075,6 +1088,37 @@ class GEDAICore:
             logger.info(f"  HP pre-filter done. Removed bands {bands_to_hp_zero}")
         else:
             data_hp = data_avref
+
+        # --- Adaptive Purity Bypass ---
+        # Compute variance concentration (max eigenvalue / sum of eigenvalues) on HP data.
+        # High concentration (> 0.60) means a single strong brain component dominates (extremely clean data).
+        # Noisy data has variance spread across multiple artifact components (concentration < 0.60).
+        from scipy.linalg import eigh as scipy_eigh
+        try:
+            data_cov = np.cov(data_hp)
+            evals_broadband = scipy_eigh(data_cov, ref_cov_reg, eigvals_only=True)
+            evals_broadband = evals_broadband[evals_broadband > 0]
+            if len(evals_broadband) > 0:
+                variance_concentration = float(np.max(evals_broadband) / np.sum(evals_broadband))
+            else:
+                variance_concentration = 0.0
+        except Exception:
+            variance_concentration = 0.0
+
+        if self.artifact_threshold_type == "auto" and variance_concentration > 1.0: # Disabled because large artifacts also cause high variance concentration
+            logger.info(f"Adaptive Purity Bypass Triggered! (variance concentration={variance_concentration:.3f} > 0.60). Data is already exceptionally clean.")
+            return GEDAIResult(
+                clean=data,
+                noise=np.zeros_like(data),
+                enova_per_epoch=np.zeros(1),
+                enova_per_channel=np.zeros(data.shape[0]),
+                mean_enova=1.0 - variance_concentration,
+                sensai_score=100.0,
+                sensai_per_band=[],
+                enova_per_band=[],
+                threshold_per_band=[],
+                band_limits=[]
+            )
 
         if self.broadband_pass:
             logger.info(f"Pass 1: broadband GED pre-cleaning ({self.artifact_threshold_type}, epoch=1s) …")

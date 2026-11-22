@@ -94,8 +94,8 @@ def run_threshold_sweep(
         total_combos = len(subj_list) * len(thresholds)
         done = 0
 
-        # Disable synthetic artifact injection completely for all datasets
-        inject_arts = False
+        # Enable synthetic artifact injection for BNCI2014_001 to evaluate cleaning performance
+        inject_arts = ds_name in ("BNCI2014_001", "Zhou2016")
 
         for s_idx, subj in enumerate(subj_list, 1):
             logger.info(f"[{ds_name} | Subject {s_idx}/{len(subj_list)}] Preparing subject {subj}…")

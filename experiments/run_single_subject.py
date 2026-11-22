@@ -939,7 +939,7 @@ def apply_threshold(cache: SubjectCache, enova_threshold: float) -> dict:
         ba_reject_keep_asr = dec_reject_asr.get("balanced_accuracy", float("nan"))
 
     # ---------------------------------------------------------------
-    # Information Transfer Rate (Wolpaw + Gemini/Ros effective ITR)
+    # Information Transfer Rate (Wolpaw effective ITR)
     # ---------------------------------------------------------------
     # 2-class problem (left vs right hand). Trial duration is
     # dataset-specific (BNCI2014_001=4s, Zhou2016=5s, Weibo2014=4s).

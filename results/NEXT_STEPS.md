@@ -82,7 +82,7 @@ All three have **left_hand** and **right_hand** classes → use those for binary
 ## Run Commands
 
 ### Phase 2a — Wire 3 datasets (developer task)
-*Wait for code update from Claude before running.*
+*Ensure all dataset loaders are configured before running.*
 
 ### Phase 2b — Run the full sweep (after code is wired)
 ```bash

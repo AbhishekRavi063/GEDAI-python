@@ -1,3 +1,4 @@
+import os
 """analysis/plot_weibo_simulation.py
 
 Reads results/weibo_simulated_noise_sweep.csv and plots the breakdown curves 
@@ -22,7 +23,7 @@ PLOT_DIR = Path(__file__).parent.parent / "plots"
 PLOT_DIR.mkdir(exist_ok=True)
 
 # App Data Artifacts directory
-ARTIFACTS_DIR = Path("/Users/abhishekr/.gemini/antigravity/brain/bf94f6e8-ceee-4b39-8a40-fb1214654271")
+ARTIFACTS_DIR = Path(os.environ.get("ARTIFACTS_DIR", "")) if os.environ.get("ARTIFACTS_DIR") else None
 
 def generate_plot():
     csv_path = RESULTS_DIR / "weibo_simulated_noise_sweep.csv"
@@ -87,7 +88,7 @@ def generate_plot():
     logger.info(f"Saved figure → {plot_path}")
 
     # Copy to Artifacts directory
-    if ARTIFACTS_DIR.exists():
+    if ARTIFACTS_DIR and ARTIFACTS_DIR.exists():
         art_path = ARTIFACTS_DIR / "fig13_weibo_simulated_noise.png"
         plt.savefig(art_path, bbox_inches="tight")
         logger.info(f"Saved figure to Artifacts directory → {art_path}")
